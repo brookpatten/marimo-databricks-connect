@@ -187,8 +187,7 @@ def test_fs_ls_abfss_does_not_call_dbutils():
     dbu = MagicMock()
     dbu.fs.ls.side_effect = AssertionError("dbutils must not be called for abfss")
     spark = MagicMock()
-    chain = (spark.read.format.return_value.option.return_value.option.return_value
-             .load.return_value.select.return_value.limit.return_value)
+    chain = spark.read.format.return_value.option.return_value.option.return_value.load.return_value.select.return_value.limit.return_value
     chain.collect.return_value = []
     fs = DbutilsFileSystem(dbutils=dbu, spark=spark, root="/Volumes")
     fs.ls("abfss://c@acct.dfs.core.windows.net/data")
@@ -253,8 +252,7 @@ def test_fs_ls_abfss_uses_spark_and_groups_subdirs():
         return r
 
     spark = MagicMock()
-    chain = (spark.read.format.return_value.option.return_value.option.return_value.load
-             .return_value.select.return_value.limit.return_value)
+    chain = spark.read.format.return_value.option.return_value.option.return_value.load.return_value.select.return_value.limit.return_value
     chain.collect.return_value = [
         _row(f"{base}/a.parquet", 100),
         _row(f"{base}/b.parquet", 200),

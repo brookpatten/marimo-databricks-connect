@@ -42,6 +42,8 @@ __all__ = [
     "show_all_catalogs",
     "reset_catalog_filter",
     "catalog_filter",
+    "workflows_widget",
+    "compute_widget",
 ]
 
 _cache: dict[str, Any] = {}
@@ -221,3 +223,53 @@ def _register_with_marimo() -> None:
 
 
 _register_with_marimo()
+
+
+def workflows_widget(workspace_client: Any = None) -> Any:
+    """Create an interactive widget for browsing Databricks workflows.
+
+    The widget displays jobs in the workspace with drill-down into tasks
+    and run history. Requires ``anywidget`` (installed as a dependency).
+
+    Args:
+        workspace_client: An optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+
+    Returns:
+        A ``WorkflowsWidget`` anywidget instance. Display it by placing it
+        as the last expression in a marimo cell.
+
+    Example::
+
+        from marimo_databricks_connect import workflows_widget
+        widget = workflows_widget()
+        widget
+    """
+    from ._workflows import WorkflowsWidget
+
+    return WorkflowsWidget(workspace_client=workspace_client)
+
+
+def compute_widget(workspace_client: Any = None) -> Any:
+    """Create an interactive widget for browsing Databricks compute resources.
+
+    Displays clusters, SQL warehouses, vector search endpoints, instance pools,
+    and cluster policies in a tabbed interface with click-to-inspect detail panels.
+
+    Args:
+        workspace_client: An optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+
+    Returns:
+        A ``ComputeWidget`` anywidget instance. Display it by placing it
+        as the last expression in a marimo cell.
+
+    Example::
+
+        from marimo_databricks_connect import compute_widget
+        widget = compute_widget()
+        widget
+    """
+    from ._compute import ComputeWidget
+
+    return ComputeWidget(workspace_client=workspace_client)
