@@ -15,7 +15,7 @@ def _():
 
 @app.cell
 def _(external_location):
-    es = external_location("abfss://devops@sa01flexflowdppc01dev.dfs.core.windows.net")
+    es = external_location("abfss://devops@foo.dfs.core.windows.net")
     return
 
 
