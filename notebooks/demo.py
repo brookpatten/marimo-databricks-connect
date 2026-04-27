@@ -14,6 +14,20 @@ def _():
 
 
 @app.cell
+def _(external_location):
+    es = external_location("abfss://devops@sa01flexflowdppc01dev.dfs.core.windows.net")
+    return
+
+
+@app.cell
+def _(spark):
+    # Lazy Spark DataFrame — marimo renders it without materialising the whole table.
+    trips = spark.read.table("samples.nyctaxi.trips").limit(25)
+    trips
+    return
+
+
+@app.cell
 def _(external_location, include_catalogs):
     # Filter the Data sources panel. Default = current catalog only; add more
     # by name or fnmatch glob. Excludes always win. Filtering is panel-only;
@@ -29,10 +43,26 @@ def _(external_location, include_catalogs):
 
 
 @app.cell
-def _(spark):
-    # Lazy Spark DataFrame — marimo renders it without materialising the whole table.
-    trips = spark.read.table("samples.nyctaxi.trips").limit(25)
-    trips
+def _():
+    from marimo_databricks_connect import compute_widget                                                                            
+
+    compute_widget()  
+    return
+
+
+@app.cell
+def _():
+    from marimo_databricks_connect import workflows_widget                                                                          
+
+    workflows_widget()   
+    return
+
+
+@app.cell
+def _():
+    from marimo_databricks_connect import unity_catalog_widget
+
+    unity_catalog_widget()
     return
 
 

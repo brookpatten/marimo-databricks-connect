@@ -44,6 +44,7 @@ __all__ = [
     "catalog_filter",
     "workflows_widget",
     "compute_widget",
+    "unity_catalog_widget",
 ]
 
 _cache: dict[str, Any] = {}
@@ -248,6 +249,32 @@ def workflows_widget(workspace_client: Any = None) -> Any:
     from ._workflows import WorkflowsWidget
 
     return WorkflowsWidget(workspace_client=workspace_client)
+
+
+def unity_catalog_widget(workspace_client: Any = None) -> Any:
+    """Create an interactive widget for browsing Databricks Unity Catalog.
+
+    The widget displays catalogs, schemas, tables, columns, lineage,
+    permissions, external locations, storage credentials, connections,
+    volumes, and external metadata in a tabbed interface.
+
+    Args:
+        workspace_client: An optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+
+    Returns:
+        A ``UnityCatalogWidget`` anywidget instance. Display it by placing it
+        as the last expression in a marimo cell.
+
+    Example::
+
+        from marimo_databricks_connect import unity_catalog_widget
+        widget = unity_catalog_widget()
+        widget
+    """
+    from ._unity_catalog import UnityCatalogWidget
+
+    return UnityCatalogWidget(workspace_client=workspace_client)
 
 
 def compute_widget(workspace_client: Any = None) -> Any:

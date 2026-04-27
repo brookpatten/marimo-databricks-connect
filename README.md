@@ -6,7 +6,8 @@ This package provides compatibility for marimo notebooks to use databricks all p
 - Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
 - Allow execution of both python & sql
 - Allow browsing of catalogs/schemas/tables/columns in the marimo data sources view
-- Allow browsing of external locations, volumes, and dbfs in the storage browser
+- Allow browsing of external locations, volumes, and dbfs in the marimo storage browser
+- Widgets to replicate critical parts of the dbr UI (compute, workflows, unity catalog)
 
 ### Pyspark
 
@@ -31,7 +32,7 @@ import marimo as mo
 from marimo_databricks_connect import (
     dbfs, dbutils, external_location, spark,
     exclude_catalogs, include_catalogs, show_all_catalogs,
-    workflows_widget, compute_widget,
+    workflows_widget, compute_widget, unity_catalog_widget,
 )
 ```
 
@@ -116,6 +117,18 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 
 The package ships two interactive widgets built with [anywidget](https://anywidget.dev/) for exploring your Databricks workspace directly inside marimo notebooks.
 
+### Unity Catalog widget
+
+Browse catalogs, schemas, tables, columns, volumes, and more. Inspect table details, view sample data, explore table & column lineage, and check permissions. Also browse external locations (with drill-through into their contents), storage credentials, connections, and external metadata:
+
+```python
+from marimo_databricks_connect import unity_catalog_widget
+
+widget = unity_catalog_widget()
+widget  # display in cell output
+```
+![uc](./docs/uc.png)
+
 ### Workflows widget
 
 Browse jobs, drill into tasks, and view run history:
@@ -125,15 +138,6 @@ from marimo_databricks_connect import workflows_widget
 
 widget = workflows_widget()
 widget  # display in cell output
-```
-
-You can also pass an explicit `WorkspaceClient`:
-
-```python
-from databricks.sdk import WorkspaceClient
-
-w = WorkspaceClient(...)
-widget = workflows_widget(workspace_client=w)
 ```
 
 ![workflows](./docs/workflows.png)
@@ -149,13 +153,7 @@ widget = compute_widget()
 widget  # display in cell output
 ```
 
-As with the workflows widget, you can supply your own `WorkspaceClient`:
-
-```python
-widget = compute_widget(workspace_client=w)
-```
-
-Both widgets authenticate using the default Databricks auth chain (env vars, `~/.databrickscfg`, `az login`, etc.) when no explicit client is provided.
+All widgets authenticate using the default Databricks auth chain (env vars, `~/.databrickscfg`, `az login`, etc.) when no explicit client is provided.
 
 ![compute](./docs/compute.png)
 
