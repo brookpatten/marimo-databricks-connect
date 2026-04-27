@@ -7,30 +7,23 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from marimo_databricks_connect import dbfs, dbutils, external_location, spark
+    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs
 
-    return external_location, mo, spark
+
+    return exclude_catalogs, external_location, include_catalogs, mo, spark
 
 
 @app.cell
-def _(external_location):
+def _(exclude_catalogs, external_location, include_catalogs):
     # Filter the Data sources panel. Default = current catalog only; add more
     # by name or fnmatch glob. Excludes always win. Filtering is panel-only;
     # SQL execution remains workspace-wide.
-    from marimo_databricks_connect import (
-        exclude_catalogs,
-        include_catalogs,
-        # show_all_catalogs,
-    )
 
-    include_catalogs("foo_dev")
-    # include_catalogs("dev_*", "main.bronze_*")
-    exclude_catalogs("system", "__databricks_*")
 
-    # Uncomment and edit one of the following to expose another browser root:
-    #
-    landing = external_location("foo_sa_devops")
-    # raw     = external_location("abfss://container@acct.dfs.core.windows.net/data")
+    include_catalogs("system")
+    # exclude_catalogs("system", "__databricks_*")
+
+    # landing = external_location("landing_zone")
     _ = external_location  # keeps the import "used" without doing anything yet
     return
 

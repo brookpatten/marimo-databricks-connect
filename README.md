@@ -1,6 +1,13 @@
-# scratch
+# marimo-databricks-connect
 
-This folder is reserved for personal, exploratory, and troubleshooting marimo notebooks.
+This package provides compatibility for marimo notebooks to use databricks all purpose serverless compute.  It was designed with the following priorities.
+
+- Connect to databricks using databricks-connect & spark (not sql warehouse)
+- Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
+- Allow execution of both python & sql
+- Allow browsing of catalogs/schemas/tables/columns in the marimo data sources view
+- Allow browsing of external locations, volumes, and dbfs in the storage browser
+
 
 ## Quickstart
 
@@ -14,18 +21,21 @@ Then in any notebook in this folder:
 
 ```python
 import marimo as mo
-from marimo_databricks_connect import spark, dbutils, dbfs
+from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs
 ```
 
 That single import gives you:
 
 - `spark` — a `DatabricksSession` on serverless compute (OAuth, no host/token config).
 - `dbutils` — bound to that session.
+- external_location - Add external locations to browse in the UI
+- include/exclude_catalogs - Show/Hide catalogs in the datasource UI
 - `dbfs` — an fsspec filesystem rooted at `/Volumes` that powers the marimo
   **storage browser** via Unity Catalog (no direct ADLS access).
 - A registered `SparkConnectEngine` so marimo's **data sources** panel browses
   catalogs / schemas / tables, and SQL cells run on Spark when you pass
   `engine=spark`:
+  
 
   ```python
   mo.sql("SELECT * FROM samples.nyctaxi.trips LIMIT 100", engine=spark)
