@@ -70,7 +70,7 @@ jobs:
           version-file: "pyproject.toml"
 
   test:
-    name: Test & SonarQube
+    name: Test
     needs: [ version, ruff, gitleaks ] #snyk
     runs-on: ubuntu-latest
     steps:
