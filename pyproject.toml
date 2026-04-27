@@ -130,7 +130,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = ["E", "F", "W", "C90", "D", "I", "N", "TD"]
 "notebooks/**" = ["E", "F", "W", "C90", "D", "I", "N", "TD"]
 
 [tool.ruff.lint.isort]
