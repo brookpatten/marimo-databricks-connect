@@ -172,9 +172,7 @@ class DbutilsFileSystem(AbstractFileSystem):
             name = base + head
             if sep:
                 # Subdirectory at this level — only record once.
-                entries.setdefault(
-                    name, {"name": name, "size": 0, "type": "directory"}
-                )
+                entries.setdefault(name, {"name": name, "size": 0, "type": "directory"})
             else:
                 mtime = row["modificationTime"]
                 entries[name] = {
@@ -199,9 +197,7 @@ class DbutilsFileSystem(AbstractFileSystem):
         resolved = self._resolve(path)
         return io.BytesIO(self._read_bytes(resolved))
 
-    def cat_file(
-        self, path: str, start: int | None = None, end: int | None = None, **kwargs: Any
-    ) -> bytes:
+    def cat_file(self, path: str, start: int | None = None, end: int | None = None, **kwargs: Any) -> bytes:
         data = self._read_bytes(self._resolve(path))
         if start is None and end is None:
             return data

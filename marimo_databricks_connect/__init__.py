@@ -117,9 +117,7 @@ def external_location(name_or_path: str) -> Any:
         # ``DESCRIBE EXTERNAL LOCATION <name>`` returns a single row with
         # named columns: name, url, credential_name, read_only, comment, ...
         try:
-            rows = spark.sql(
-                f"DESCRIBE EXTERNAL LOCATION `{name_or_path}`"
-            ).collect()
+            rows = spark.sql(f"DESCRIBE EXTERNAL LOCATION `{name_or_path}`").collect()
         except Exception as exc:
             raise ValueError(
                 f"Could not resolve external location {name_or_path!r}: "
@@ -127,22 +125,13 @@ def external_location(name_or_path: str) -> Any:
                 f"or /Volumes/... path instead."
             ) from exc
         if not rows:
-            raise ValueError(
-                f"External location {name_or_path!r} not found in Unity Catalog."
-            )
+            raise ValueError(f"External location {name_or_path!r} not found in Unity Catalog.")
         row = rows[0].asDict()
         # Column name has been ``url`` since the feature shipped, but be
         # defensive about casing / future renames.
-        root = (
-            row.get("url")
-            or row.get("URL")
-            or row.get("location")
-            or row.get("storage_location")
-        )
+        root = row.get("url") or row.get("URL") or row.get("location") or row.get("storage_location")
         if not root:
-            raise ValueError(
-                f"DESCRIBE EXTERNAL LOCATION returned no URL column; got {list(row)}"
-            )
+            raise ValueError(f"DESCRIBE EXTERNAL LOCATION returned no URL column; got {list(row)}")
 
     return DbutilsFileSystem(dbutils=dbu, spark=spark, root=root)
 

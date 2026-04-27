@@ -137,9 +137,7 @@ class SparkConnectEngine(SQLConnection[Any]):
         result: list[DataTable] = []
         for tbl in self._list_tables(database, schema):
             if include_table_details:
-                detail = self.get_table_details(
-                    table_name=tbl, schema_name=schema, database_name=database
-                )
+                detail = self.get_table_details(table_name=tbl, schema_name=schema, database_name=database)
                 if detail is not None:
                     result.append(detail)
                     continue

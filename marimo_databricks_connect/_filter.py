@@ -130,51 +130,31 @@ class CatalogFilter:
         if self.show_all:
             candidates = list(all_catalogs)
         elif self.includes:
-            candidates = [
-                c
-                for c in all_catalogs
-                if any(p.matches_catalog(c) for p in self.includes)
-            ]
+            candidates = [c for c in all_catalogs if any(p.matches_catalog(c) for p in self.includes)]
         else:
             candidates = [default_catalog] if default_catalog else []
 
         # Only catalog-wide excludes (no schema part) drop a catalog from the
         # listing entirely — schema-scoped excludes don't hide the parent.
         cat_wide_excludes = [p for p in self.excludes if p.schema is None]
-        return [
-            c
-            for c in candidates
-            if not any(p.matches_catalog(c) for p in cat_wide_excludes)
-        ]
+        return [c for c in candidates if not any(p.matches_catalog(c) for p in cat_wide_excludes)]
 
     def filter_schemas(self, catalog: str, all_schemas: list[str]) -> list[str]:
         """Return the subset of ``all_schemas`` to surface inside ``catalog``."""
         if self.show_all or not self.includes:
             included = list(all_schemas)
         else:
-            cat_wide_includes = [
-                p
-                for p in self.includes
-                if p.schema is None and p.matches_catalog(catalog)
-            ]
+            cat_wide_includes = [p for p in self.includes if p.schema is None and p.matches_catalog(catalog)]
             if cat_wide_includes:
                 included = list(all_schemas)
             else:
                 included = [
                     s
                     for s in all_schemas
-                    if any(
-                        p.matches_schema(catalog, s)
-                        for p in self.includes
-                        if p.schema is not None
-                    )
+                    if any(p.matches_schema(catalog, s) for p in self.includes if p.schema is not None)
                 ]
 
-        return [
-            s
-            for s in included
-            if not any(p.matches_schema(catalog, s) for p in self.excludes)
-        ]
+        return [s for s in included if not any(p.matches_schema(catalog, s) for p in self.excludes)]
 
 
 # --------------------------------------------------------------------------- #
@@ -207,9 +187,7 @@ def _load_pyproject_defaults(start: Path | None = None) -> dict[str, object]:
             except Exception:
                 LOGGER.debug("failed to parse %s", path, exc_info=True)
                 return {}
-            return (
-                data.get("tool", {}).get("marimo_databricks_connect", {}) or {}
-            )
+            return data.get("tool", {}).get("marimo_databricks_connect", {}) or {}
     return {}
 
 
