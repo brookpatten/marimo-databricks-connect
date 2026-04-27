@@ -151,5 +151,8 @@ docstring-quotes = "double"
 "pyspark.sql.types" = "T"
 "pyspark.sql.window" = "W"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.pylint.master]
 load-plugins = "databricks.labs.pylint.all"
