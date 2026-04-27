@@ -33,10 +33,10 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 # only-include = ["marimo_databricks_connect"]
-packages = ["marimo-databricks-connect"]
+packages = ["marimo_databricks_connect"]
 
-[tool.hatch.build.targets.wheel.sources]
-"marimo_databricks_connect" = "marimo-databricks-connect"
+# [tool.hatch.build.targets.wheel.sources]
+# "marimo_databricks_connect" = "marimo-databricks-connect"
 
 # Note, ruff config shamelessly stolen from AIF to try to be consistent across D&AI platform
 [tool.ruff]
