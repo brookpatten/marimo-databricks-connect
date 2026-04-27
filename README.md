@@ -20,6 +20,8 @@ We already have databricks notebooks, jupyter, and python.  Why should you try M
 | Jupyter               | ❌          | ✅          | ✅           |❌           | ✅ |
 | Marimo                | ✅          | ✅          | ✅           |✅           | ✅|
 
+Unfortunately, "out of the box", Marimo databricks support isn't great.  This package aims enable all of the cool Marimo features for databricks
+
 ### Pyspark
 
 ![pyspark](./docs/pyspark.png)
