@@ -1,0 +1,151 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "marimo_databricks_connect"
+version = "0"
+description = ""
+authors = [{name = "Brook Patten", email = "brook.patten@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "databricks-connect>=16.4,<19",
+    "marimo>=0.23.3",
+    "fsspec>=2024.0",
+]
+
+# [project.scripts]
+# new = "_"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.2,<9",
+    "pytest-cov>=5.0.0,<6",
+    "pre-commit>=3.7.1,<4"
+]
+
+# [[tool.uv.index]]
+# name = "pypi"
+# url = "https://url/simple"
+# explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["marimo_databricks_connect"]
+
+# Note, ruff config shamelessly stolen from AIF to try to be consistent across D&AI platform
+[tool.ruff]
+line-length = 119
+target-version = 'py310'
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "D", "I", "N", "TD"]
+ignore = [
+    # 'f-string without any placeholders' - there are cases of splitted strings where some parts doesn't have
+    # placeholders, but are formatted with f-strings to keep consistency with other f-string formatted parts
+    "F541",
+
+    # 'Missing whitespace around arithmetic operator' - use it per your best judgment
+    "E226",
+
+    # 'At least two spaces before inline comment' - dropped rule
+    "E261",
+
+    # 'Do not assign a lambda expression, use a def' - lambdas allowed due to popularity in DS apps
+    "E731",
+
+    # 'Line break before binary operator' - follow W504 and use line break before binary operator
+    # "W503",
+
+    # "'from module import *' only allowed at module level" - it's not allowed even at module level
+    "F406",
+
+    # 'The names in your from import are in the wrong order' - too strict
+    # "I101",
+
+    # flake8-variable-names: We're allowing single-character variable names as those make sense in some cases
+    # "VNE001", "VNE002",
+
+    # Error that appeared due to pep8-naming -> 0.12.1 nump in CW. Doesn't impact local linting for dnalib contributors
+    # Adding to ignored as it's disabled by default on pep8-naming
+    "N818",
+
+    # Add blank line after "Args"
+    "D413",
+
+    # First line of docstring should be in imperative mood
+    "D401",
+
+    # Invalid TODO tag
+    "TD001",
+
+    # Missing author in TODO
+    "TD002",
+
+    # Missing issue link for this TODO
+    "TD003",
+
+    # Missing colon in TODO
+    "TD004",
+
+    # Missing TODO description after colon
+    "TD005",
+
+    # Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
+    "E721",
+
+    # Function is too complex
+    "C901",
+
+    # Missing argument description in the docstring
+    "D417",
+
+    # Invalid module name
+    "N999",
+
+    # First argument of a class method should be named `cls`
+    "N804",
+
+    # First word of the docstring should not be "This"
+    "D404",
+
+    # Section underline should match the length of its name
+    "D409",
+
+    # We ignore this because of: warning: `incorrect-blank-line-before-class` (D203) and `no-blank-line-before-class` (D211) are incompatible. Ignoring `incorrect-blank-line-before-class`.
+    "D203",
+
+    # We ighore this because of: warning: `multi-line-summary-first-line` (D212) and `multi-line-summary-second-line` (D213) are incompatible. Ignoring `multi-line-summary-second-line`.
+    "D213",
+
+    # Allow upper-case variables
+    "N806",
+
+    # Allow uppercase imports eg Functions as F
+    "N812", 
+
+    #Unused Imports, eg Functions as F
+    "F401",
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.lint.pep8-naming]
+extend-ignore-names = ["*KiB*"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = false
+exclude = ["_version.py"]
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+
+[tool.ruff.lint.flake8-import-conventions.aliases]
+"pyspark.sql.functions" = "F"
+"pyspark.sql.types" = "T"
+"pyspark.sql.window" = "W"
+
+[tool.pylint.master]
+load-plugins = "databricks.labs.pylint.all"

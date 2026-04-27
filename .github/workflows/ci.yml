@@ -1,0 +1,124 @@
+name: Build, Analyze, Test, Publish
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  workflow_dispatch:
+
+jobs:
+  version:
+    name: Version & Tag
+    runs-on: ubuntu-latest
+    outputs:
+      fullSemVer: ${{ steps.version.outputs.fullSemVer }}
+      majorMinorPatch: ${{ steps.version.outputs.majorMinorPatch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: gittools/actions/gitversion/setup@v1.1.1
+        name: Install GitVersion
+        with:
+          versionSpec: "5.x"
+      - name: Determine Version
+        id: version
+        uses: gittools/actions/gitversion/execute@v1.1.1
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ steps.version.outputs.fullSemVer }}
+          tag_exists_error: true
+      - uses: rickstaa/action-create-tag@v1
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        with:
+          tag: ${{ steps.version.outputs.majorMinorPatch }}
+          tag_exists_error: false
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2.3.7
+        env:
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ruff:
+    name: Ruff (Python Formatting)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          version-file: "pyproject.toml"
+
+  test:
+    name: Test & SonarQube
+    needs: [ version, ruff, gitleaks ] #snyk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - uses: databricks/setup-cli@main
+      - name: Set Version
+        uses: sandstromviktor/toml-editor@2.0.0
+        with:
+          file: "pyproject.toml"
+          key: "project.version"
+          value: "${{ needs.version.outputs.majorMinorPatch }}"
+      - run: uv sync
+      - run: uv build
+      - run: uv run pytest --junitxml=testresults.xml --cov=./
+          --cov-report=xml:coverage.xml
+      - uses: EnricoMi/publish-unit-test-result-action@v2.16.1
+        with:
+          github_token: ${{ github.token }}
+          files: testresults.xml
+
+  deploy:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    name: Publish Package
+    needs: [ version, test ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Set Version
+        uses: sandstromviktor/toml-editor@2.0.0
+        with:
+          file: "pyproject.toml"
+          key: "project.version"
+          value: "${{ needs.version.outputs.majorMinorPatch }}"
+      - run: echo '${{ needs.version.outputs.majorMinorPatch }}'
+      - run: echo '__version__ = "${{ needs.version.outputs.majorMinorPatch }}"' >
+          marimo_databricks_connect/__init__.py
+      - run: uv sync
+      - run: uv build
+        # env: # - run: uv publish --index __pypi__
