@@ -1,6 +1,6 @@
 # marimo-databricks-connect
 
-This package provides compatibility for marimo notebooks to use databricks all purpose serverless compute.  It was designed with the following priorities.
+This package provides compatibility for marimo notebooks to use databricks all purpose serverless compute via databricks-connect.  It was designed with the following priorities.
 
 - Connect to databricks using databricks-connect & spark (not sql warehouse)
 - Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
@@ -8,6 +8,17 @@ This package provides compatibility for marimo notebooks to use databricks all p
 - Allow browsing of catalogs/schemas/tables/columns in the marimo data sources view
 - Allow browsing of external locations, volumes, and dbfs in the marimo storage browser
 - Widgets to replicate critical parts of the dbr UI (compute, workflows, unity catalog)
+
+## Why Marimo?
+
+We already have databricks notebooks, jupyter, and python.  Why should you try Marimo?  Because it checks all the boxes:
+
+| Code/Format           | Easy Merges | OSS Editor | Visualizations | Runs in Normal Python | REPL |
+| -----------           | ----------- |--------------|--------------|--------------|--------------|
+| Python                | ✅          | ✅          | ❌           |✅           | ❌ |
+| Databricks Notebook   | ✅          | ❌          | ✅           |❌ (ignores magic and sql) |✅|
+| Jupyter               | ❌          | ✅          | ✅           |❌           | ✅ |
+| Marimo                | ✅          | ✅          | ✅           |✅           | ✅|
 
 ### Pyspark
 
