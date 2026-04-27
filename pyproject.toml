@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "marimo_databricks_connect"
+name = "marimo-databricks-connect"
 version = "0"
 description = ""
 authors = [{name = "Brook Patten", email = "brook.patten@gmail.com"}]
@@ -32,7 +32,11 @@ dev = [
 # explicit = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["marimo_databricks_connect"]
+only-include = ["marimo_databricks_connect"]
+# packages = ["marimo-databricks-connect"]
+
+[tool.hatch.build.targets.wheel.sources]
+"marimo_databricks_connect" = "marimo-databricks-connect"
 
 # Note, ruff config shamelessly stolen from AIF to try to be consistent across D&AI platform
 [tool.ruff]

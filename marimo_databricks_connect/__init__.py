@@ -45,6 +45,17 @@ __all__ = [
     "workflows_widget",
     "compute_widget",
     "unity_catalog_widget",
+    # Single-instance operational widgets
+    "job_widget",
+    "table_widget",
+    "schema_widget",
+    "cluster_widget",
+    "warehouse_widget",
+    "serving_endpoint_widget",
+    "external_location_widget",
+    "vector_search_endpoint_widget",
+    "vector_index_widget",
+    "app_widget",
 ]
 
 _cache: dict[str, Any] = {}
@@ -313,3 +324,264 @@ def compute_widget(workspace_client: Any = None) -> Any:
     from ._compute import ComputeWidget
 
     return ComputeWidget(workspace_client=workspace_client)
+
+
+# --------------------------------------------------------------------------- #
+# Single-instance operational widgets                                          #
+# --------------------------------------------------------------------------- #
+
+
+def job_widget(
+    job_id: int | None = None,
+    job_name: str | None = None,
+    workspace_client: Any = None,
+    refresh_seconds: int = 30,
+) -> Any:
+    """Create an operational widget for a single Databricks job/workflow.
+
+    Displays job details, recent runs, task DAG, and logs. Supports
+    actions: Run Now, Cancel, and Repair. Auto-refreshes periodically.
+
+    Args:
+        job_id: The numeric job ID. Provide either this or ``job_name``.
+        job_name: The exact job name. Resolved to job_id on init.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import job_widget
+        widget = job_widget(job_id=123456)
+        widget
+    """
+    from ._job_widget import JobWidget
+
+    return JobWidget(
+        job_id=job_id,
+        job_name=job_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def table_widget(full_name: str, workspace_client: Any = None) -> Any:
+    """Create an operational widget for a single Unity Catalog table.
+
+    Displays columns, sample data, lineage, permissions, and properties.
+
+    Args:
+        full_name: Three-part table name (``catalog.schema.table``).
+        workspace_client: Optional ``WorkspaceClient``.
+
+    Example::
+
+        from marimo_databricks_connect import table_widget
+        widget = table_widget("main.bronze.events")
+        widget
+    """
+    from ._table_widget import TableWidget
+
+    return TableWidget(full_name=full_name, workspace_client=workspace_client)
+
+
+def schema_widget(catalog_name: str, schema_name: str, workspace_client: Any = None) -> Any:
+    """Create an operational widget for a single Unity Catalog schema.
+
+    Displays tables, volumes, permissions, and properties.
+
+    Args:
+        catalog_name: The catalog name.
+        schema_name: The schema name.
+        workspace_client: Optional ``WorkspaceClient``.
+
+    Example::
+
+        from marimo_databricks_connect import schema_widget
+        widget = schema_widget("main", "bronze")
+        widget
+    """
+    from ._schema_widget import SchemaWidget
+
+    return SchemaWidget(
+        catalog_name=catalog_name,
+        schema_name=schema_name,
+        workspace_client=workspace_client,
+    )
+
+
+def cluster_widget(cluster_id: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single Databricks cluster.
+
+    Displays cluster status, config, and events. Supports Start, Stop,
+    and Restart actions. Auto-refreshes periodically.
+
+    Args:
+        cluster_id: The cluster ID string.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import cluster_widget
+        widget = cluster_widget("0123-456789-abcdef")
+        widget
+    """
+    from ._cluster_widget import ClusterWidget
+
+    return ClusterWidget(
+        cluster_id=cluster_id,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def warehouse_widget(warehouse_id: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single Databricks SQL warehouse.
+
+    Displays warehouse status, scaling, and config. Supports Start and
+    Stop actions. Auto-refreshes periodically.
+
+    Args:
+        warehouse_id: The SQL warehouse ID string.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import warehouse_widget
+        widget = warehouse_widget("abc123def456")
+        widget
+    """
+    from ._warehouse_widget import WarehouseWidget
+
+    return WarehouseWidget(
+        warehouse_id=warehouse_id,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def serving_endpoint_widget(endpoint_name: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single model serving endpoint.
+
+    Displays endpoint status, served entities, traffic config, and
+    provides an interactive query interface. Auto-refreshes periodically.
+
+    Args:
+        endpoint_name: The serving endpoint name.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import serving_endpoint_widget
+        widget = serving_endpoint_widget("my-model-endpoint")
+        widget
+    """
+    from ._serving_endpoint_widget import ServingEndpointWidget
+
+    return ServingEndpointWidget(
+        endpoint_name=endpoint_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def external_location_widget(location_name: str, workspace_client: Any = None) -> Any:
+    """Create an operational widget for a single external location.
+
+    Displays location details, file browser, permissions, and validation.
+
+    Args:
+        location_name: The UC external location name.
+        workspace_client: Optional ``WorkspaceClient``.
+
+    Example::
+
+        from marimo_databricks_connect import external_location_widget
+        widget = external_location_widget("finops_landing")
+        widget
+    """
+    from ._external_location_widget import ExternalLocationWidget
+
+    return ExternalLocationWidget(location_name=location_name, workspace_client=workspace_client)
+
+
+def vector_search_endpoint_widget(endpoint_name: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single Vector Search endpoint.
+
+    Displays endpoint status, scaling info, hosted indexes, and metrics.
+    Auto-refreshes periodically.
+
+    Args:
+        endpoint_name: The Vector Search endpoint name.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import vector_search_endpoint_widget
+        widget = vector_search_endpoint_widget("my-vs-endpoint")
+        widget
+    """
+    from ._vector_search_endpoint_widget import VectorSearchEndpointWidget
+
+    return VectorSearchEndpointWidget(
+        endpoint_name=endpoint_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def vector_index_widget(index_name: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single Vector Search index.
+
+    Displays index status, embedding configuration, sample data,
+    lineage, and permissions.  Supports triggering a sync for
+    Delta Sync indexes.  Auto-refreshes periodically.
+
+    Args:
+        index_name: Three-part index name (``catalog.schema.index``).
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import vector_index_widget
+        widget = vector_index_widget("main.rag.doc_index")
+        widget
+    """
+    from ._vector_index_widget import VectorIndexWidget
+
+    return VectorIndexWidget(
+        index_name=index_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def app_widget(app_name: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
+    """Create an operational widget for a single Databricks App.
+
+    Displays app details, deployments, permissions, and thumbnail.
+    Supports start/stop, creating deployments, updating permissions,
+    and managing the app thumbnail.  Auto-refreshes periodically.
+
+    Args:
+        app_name: The Databricks App name.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import app_widget
+        widget = app_widget("my-dashboard-app")
+        widget
+    """
+    from ._app_widget import AppWidget
+
+    return AppWidget(
+        app_name=app_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )

@@ -1,0 +1,54 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+	"name": "marimo-databricks-connect",
+	"image": "mcr.microsoft.com/devcontainers/base:bullseye", 
+	"mounts": [
+		// IMPORTANT! your container will fail to start if the path in your WSL does not exist!
+		// use git credentials from the host wsl
+		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,type=bind",
+		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.local/share/uv,target=/home/vscode/.local/share/uv,type=bind"
+	],
+	"runArgs": ["--name", "marimo-databricks-connect"],
+	"features": {
+		"ghcr.io/kingbain/devcontainer-features-databricks/databricks-cli:0":{},
+		"ghcr.io/devcontainers/features/azure-cli:1": {},
+		"ghcr.io/jsburckhardt/devcontainer-features/uv:1":{},
+		"ghcr.io/jsburckhardt/devcontainer-features/ruff:1":{},
+		"ghcr.io/iambipinpaul/devcontainer-features/oh-my-posh:1":{
+			"theme": "https://github.com/JanDeDobbeleer/oh-my-posh/blob/main/themes/catppuccin.omp.json"  //the best theme.  You're welcome to disagree, but you're wrong.
+		},
+		"ghcr.io/devcontainers-extra/features/node-asdf:0":{},
+		"ghcr.io/devcontainers/features/github-cli:1":{}
+	},
+	"overrideFeatureInstallOrder": [
+		"ghcr.io/kingbain/devcontainer-features-databricks/databricks-cli",
+		"ghcr.io/devcontainers/features/azure-cli",
+		"ghcr.io/jsburckhardt/devcontainer-features/uv",
+		"ghcr.io/jsburckhardt/devcontainer-features/ruff",
+		"ghcr.io/iambipinpaul/devcontainer-features/oh-my-posh",
+		"ghcr.io/devcontainers-extra/features/node-asdf",
+		"ghcr.io/devcontainers/features/github-cli"
+	],
+	"remoteEnv":{
+		"DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"njpwerner.autodocstring",
+				"databricks.databricks",
+				"tamasfe.even-better-toml",
+				"github.vscode-github-actions",
+				"ms-python.vscode-pylance",
+				"ms-python.pylint",
+				"ms-python.python",
+				"ms-python.debugpy",
+				"redhat.vscode-yaml",
+				"charliermarsh.ruff",
+				"bierner.markdown-mermaid",
+				"marimo-team.vscode-marimo"
+			]
+		}
+	}
+}

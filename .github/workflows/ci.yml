@@ -102,6 +102,10 @@ jobs:
     name: Publish Package
     needs: [ version, test ]
     runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -117,8 +121,7 @@ jobs:
           key: "project.version"
           value: "${{ needs.version.outputs.majorMinorPatch }}"
       - run: echo '${{ needs.version.outputs.majorMinorPatch }}'
-      - run: echo '__version__ = "${{ needs.version.outputs.majorMinorPatch }}"' >
-          marimo_databricks_connect/__init__.py
+      - run: echo '__version__ = "${{ needs.version.outputs.majorMinorPatch }}"' >> marimo_databricks_connect/__init__.py
       - run: uv sync
       - run: uv build
-        # env: # - run: uv publish --index __pypi__
+      - run: uv publish

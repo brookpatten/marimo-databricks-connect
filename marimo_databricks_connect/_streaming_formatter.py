@@ -108,13 +108,7 @@ def _esc(s: Any) -> str:
     """HTML-escape a string."""
     if s is None:
         return ""
-    return (
-        str(s)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _detail_row(label: str, value: str) -> str:
@@ -176,19 +170,18 @@ def _format_streaming_schema(df: Any) -> tuple[str, str]:
         )
 
     html = (
-        _PULSE_CSS
-        + '<div class="marimo-stream-card-active" style="border-radius:6px;overflow:hidden;'
+        _PULSE_CSS + '<div class="marimo-stream-card-active" style="border-radius:6px;overflow:hidden;'
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
         'font-size:13px;max-width:700px;">'
         # Header
         '<div style="padding:10px 14px;background:linear-gradient(135deg,#ecfdf5,#f0fdf4);'
-        'border-bottom:1px solid #d1fae5;'
+        "border-bottom:1px solid #d1fae5;"
         'display:flex;align-items:center;gap:8px;">'
         '<span class="marimo-stream-active-dot"></span>'
         '<span style="font-weight:600;font-size:14px;">Streaming DataFrame</span>'
         '<span style="margin-left:auto;font-size:11px;padding:2px 10px;border-radius:10px;'
         'background:#fee2e2;color:#991b1b;font-weight:600;letter-spacing:0.3px;">'
-        'STREAMING</span>'
+        "STREAMING</span>"
         "</div>"
         # Animated bar
         '<div class="marimo-stream-bar-track">'
@@ -197,7 +190,7 @@ def _format_streaming_schema(df: Any) -> tuple[str, str]:
         '<div style="padding:10px 14px;font-size:12px;color:#6c757d;'
         'border-bottom:1px solid #dee2e6;">'
         f"This is a streaming DataFrame with <strong>{num_cols}</strong> "
-        f'column{"s" if num_cols != 1 else ""}. '
+        f"column{'s' if num_cols != 1 else ''}. "
         "Streaming DataFrames cannot be displayed as tables &mdash; use "
         "<code>.writeStream</code> to start a query, or call "
         "<code>spark.sql(&quot;SELECT * FROM table LIMIT 100&quot;)</code> "
@@ -222,7 +215,7 @@ def _format_streaming_schema(df: Any) -> tuple[str, str]:
         # Footer hint
         '<div style="padding:8px 14px;background:#f8f9fa;border-top:1px solid #dee2e6;'
         'font-size:11px;color:#6c757d;">'
-        "\U0001F4A1 Tip: use <code>.writeStream.format(&quot;memory&quot;)"
+        "\U0001f4a1 Tip: use <code>.writeStream.format(&quot;memory&quot;)"
         ".queryName(&quot;preview&quot;).start()</code> then "
         "<code>spark.table(&quot;preview&quot;)</code> to view data."
         "</div>"
@@ -280,14 +273,11 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
 
     # Active badge
     if is_active is True:
-        badge = (
-            '<span class="marimo-stream-badge-active">'
-            '<span class="marimo-stream-active-dot"></span> ACTIVE</span>'
-        )
+        badge = '<span class="marimo-stream-badge-active"><span class="marimo-stream-active-dot"></span> ACTIVE</span>'
     elif is_active is False:
         badge = (
             '<span style="font-size:11px;padding:2px 8px;border-radius:10px;'
-            'background:#f3f4f6;color:#6b7280;font-weight:500;">\u25CB STOPPED</span>'
+            'background:#f3f4f6;color:#6b7280;font-weight:500;">\u25cb STOPPED</span>'
         )
     else:
         badge = (
@@ -328,7 +318,7 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
 
             stop_button = mo.ui.button(
                 on_click=_on_stop_click,
-                label="\u23F9 Stop Stream",
+                label="\u23f9 Stop Stream",
                 kind="danger",
                 tooltip="Stop this streaming query",
                 on_change=_on_stop_change,
@@ -340,10 +330,7 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
             stop_element = mo.hstack(
                 [
                     stop_button,
-                    mo.Html(
-                        '<span style="font-size:11px;color:#6c757d;">'
-                        "Click to stop this streaming query</span>"
-                    ),
+                    mo.Html('<span style="font-size:11px;color:#6c757d;">Click to stop this streaming query</span>'),
                 ],
                 align="center",
                 gap=0.5,
@@ -369,13 +356,9 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
     if status.get("message"):
         detail_rows += _detail_row("Status", _esc(status["message"]))
     if status.get("isDataAvailable") is not None:
-        detail_rows += _detail_row(
-            "Data Available", "Yes" if status["isDataAvailable"] else "No"
-        )
+        detail_rows += _detail_row("Data Available", "Yes" if status["isDataAvailable"] else "No")
     if status.get("isTriggerActive") is not None:
-        detail_rows += _detail_row(
-            "Trigger Active", "Yes" if status["isTriggerActive"] else "No"
-        )
+        detail_rows += _detail_row("Trigger Active", "Yes" if status["isTriggerActive"] else "No")
 
     # Progress details
     progress_html = ""
@@ -397,11 +380,7 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
         # Sources summary
         sources = last_progress.get("sources") or []
         for i, src in enumerate(sources):
-            desc = (
-                src.get("description")
-                or src.get("startOffset")
-                or f"source {i}"
-            )
+            desc = src.get("description") or src.get("startOffset") or f"source {i}"
             n_input = src.get("numInputRows", "\u2014")
             progress_rows += _detail_row(
                 f"Source {i}",
@@ -436,8 +415,7 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
 
     # Animated bar for active queries
     active_bar = (
-        '<div class="marimo-stream-bar-track">'
-        '<div class="marimo-stream-bar-fill"></div></div>'
+        '<div class="marimo-stream-bar-track"><div class="marimo-stream-bar-fill"></div></div>'
         if is_active is True
         else ""
     )
@@ -446,22 +424,20 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
     card_class = ' class="marimo-stream-card-active"' if is_active is True else ""
     card_border = "" if is_active is True else "border:1px solid #dee2e6;"
     header_bg = (
-        "background:linear-gradient(135deg,#ecfdf5,#f0fdf4);"
-        "border-bottom:1px solid #d1fae5;"
+        "background:linear-gradient(135deg,#ecfdf5,#f0fdf4);border-bottom:1px solid #d1fae5;"
         if is_active is True
         else "background:#f8f9fa;border-bottom:1px solid #dee2e6;"
     )
 
     card_html = (
-        _PULSE_CSS
-        + f'<div{card_class} style="{card_border}border-radius:6px;'
-        'overflow:hidden;'
+        _PULSE_CSS + f'<div{card_class} style="{card_border}border-radius:6px;'
+        "overflow:hidden;"
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
         'font-size:13px;max-width:700px;">'
         # Header
         f'<div style="padding:10px 14px;{header_bg}'
         'display:flex;align-items:center;gap:8px;">'
-        '<span style="font-size:16px;">\u25B6\uFE0F</span>'
+        '<span style="font-size:16px;">\u25b6\ufe0f</span>'
         '<span style="font-weight:600;font-size:14px;">Streaming Query</span>'
         f'<span style="margin-left:auto;">{badge}</span>'
         "</div>"
@@ -472,7 +448,7 @@ def _format_streaming_query(query: Any) -> tuple[str, str]:
         # Footer
         '<div style="padding:8px 14px;background:#f8f9fa;border-top:1px solid #dee2e6;'
         'font-size:11px;color:#6c757d;">'
-        "\U0001F4A1 Use <code>query.stop()</code> to stop, "
+        "\U0001f4a1 Use <code>query.stop()</code> to stop, "
         "<code>query.awaitTermination()</code> to block, or "
         "<code>query.lastProgress</code> to inspect progress."
         "</div>"
@@ -542,9 +518,7 @@ def _make_dataframe_formatter(cls: type) -> Any:
                 _internal_preload=True,
             )._mime_()
         except Exception as exc:
-            LOGGER.debug(
-                "Falling back to repr for PySpark DataFrame: %s", exc
-            )
+            LOGGER.debug("Falling back to repr for PySpark DataFrame: %s", exc)
             return ("text/plain", repr(df))
 
     return _formatter

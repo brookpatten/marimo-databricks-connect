@@ -1,26 +1,27 @@
 # marimo-databricks-connect
 
-This package provides compatibility for marimo notebooks to use databricks all purpose serverless compute via databricks-connect.  It was designed with the following priorities.
+This package provides compatibility & widgets for marimo notebooks & databricks.  The goal is to be able to build notebooks that combine code (both python and sql), visualzations, and widgets to create "command center" style one-stop-shop UIs that can monitor, triage, troubleshoot and control our databricks projects.
 
 - Connect to databricks using databricks-connect & spark (not sql warehouse)
 - Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
-- Allow execution of both python & sql
-- Allow browsing of catalogs/schemas/tables/columns in the marimo data sources view
-- Allow browsing of external locations, volumes, and dbfs in the marimo storage browser
-- Widgets to replicate critical parts of the dbr UI (compute, workflows, unity catalog)
+- Execution of both python & sql cells
+- Browsing of catalogs/schemas/tables/columns in the marimo data sources view
+- Browsing of external locations, volumes, and dbfs in the marimo storage browser
+- Notebook widgets to monitor and control of specific instances of databricks capabilities (clusters, workflows, vector search, apps etc)
+- Widgets to browse & explore databricks capabilities (compute, workflows, unity catalog)
 
 ## Why Marimo?
 
 We already have databricks notebooks, jupyter, and python.  Why should you try Marimo?  Because it checks all the boxes:
 
-| Code/Format           | Easy Merges | OSS Editor | Visualizations | Runs in Normal Python | REPL |
-| -----------           | ----------- |--------------|--------------|--------------|--------------|
-| Python                | ✅          | ✅          | ❌           |✅           | ❌ |
-| Databricks Notebook   | ✅          | ❌          | ✅           |❌ (ignores magic and sql) |✅|
-| Jupyter               | ❌          | ✅          | ✅           |❌           | ✅ |
-| Marimo                | ✅          | ✅          | ✅           |✅           | ✅|
+| Code/Format           | Easy Merges | OSS Editor | Visualizations | Runs in Normal Python      | REPL         | Custom Widgets |
+| -----------           | ----------- |--------------|--------------|--------------              |--------------|----------      |
+| Python                | ✅          | ✅          | ❌           |✅                         | ❌           | ❌            |
+| Databricks Notebook   | ✅          | ❌          | ✅           |❌ (ignores magic and sql) | ✅           | ❌            |
+| Jupyter               | ❌          | ✅          | ✅           |❌                         | ✅           | ✅            |
+| Marimo                | ✅          | ✅          | ✅           |✅                         | ✅           | ✅            |
 
-Unfortunately, "out of the box", Marimo databricks support isn't great.  This package aims enable all of the cool Marimo features for databricks
+Unfortunately, "out of the box", Marimo databricks support, especially for databricks-connect isn't great.  This package aims enable all of the cool Marimo features for databricks
 
 ### Pyspark
 
@@ -172,7 +173,36 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 
 ![catalogs](./docs/datasources.png)
 
-## Widgets
+## Resource Specific Widgets
+
+### Databricks Apps
+![dbr app](./docs/app_widget.png)
+
+### Cluster
+![cluster](./docs/cluster_widget.png)
+
+### Job
+![job](./docs/job_widget.png)
+
+### Schema
+![schema](./docs/schema_widget.png)
+
+### Serving Endpoint
+![serving](./docs/serving_endpoint_widget.png)
+
+### Table
+![table](./docs/table_widget.png)
+
+### Vector Index
+![vector index](./docs/vector_index_widget.png)
+
+### Vector Search
+![vector search](./docs/vector_search_widget.png)
+
+### Warehouse
+![warehouse](./docs/warehouse_widget.png)
+
+## Exploration Widgets
 
 The package ships two interactive widgets built with [anywidget](https://anywidget.dev/) for exploring your Databricks workspace directly inside marimo notebooks.
 
