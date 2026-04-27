@@ -24,7 +24,13 @@ Unfortunately, "out of the box", Marimo databricks support isn't great.  This pa
 
 ### Pyspark
 
+#### Dataframe
+
 ![pyspark](./docs/pyspark.png)
+
+#### Streaming
+
+![streaming](./docs/streaming.png)
 
 ### SQL
 
@@ -65,6 +71,46 @@ That single import gives you:
   ```python
   mo.sql("SELECT * FROM samples.nyctaxi.trips LIMIT 100", engine=spark)
   ```
+- **Streaming DataFrame support** — streaming DataFrames (from
+  `spark.readStream`) are automatically rendered with their schema and a
+  helpful status message instead of silently failing.
+- **StreamingQuery display** — streaming queries (from `.writeStream.start()`)
+  render a live status card with query name, ID, active state, progress
+  metrics, and any exceptions.
+
+## Streaming DataFrames
+
+Streaming DataFrames (`spark.readStream`) cannot be collected or displayed as
+tables. This package automatically detects them and renders a schema summary
+with column names and types:
+
+```python
+stream = spark.readStream.table("catalog.schema.my_table")
+stream  # displays schema + STREAMING badge instead of an empty cell
+```
+
+Streaming queries (returned by `.writeStream.start()`) are also rendered with a
+status card showing the query name, ID, active/stopped state, progress metrics
+(batch ID, input rows, rows/sec), source and sink info, and any exceptions:
+
+```python
+query = (
+    stream.writeStream
+    .format("memory")
+    .trigger(availableNow=True)
+    .queryName("preview")
+    .start()
+)
+query  # displays status card with ACTIVE/STOPPED badge + progress
+```
+
+To preview actual data from a streaming source, write to a memory sink and
+read the results:
+
+```python
+query.awaitTermination()  # wait for availableNow trigger to finish
+spark.table("preview")    # now displays as a normal table
+```
 
 ## Browsing UC external locations
 

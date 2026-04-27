@@ -226,6 +226,19 @@ def _register_with_marimo() -> None:
 _register_with_marimo()
 
 
+def _register_streaming_formatter() -> None:
+    """Register streaming DataFrame formatter (idempotent)."""
+    try:
+        from ._streaming_formatter import register_streaming_formatter
+
+        register_streaming_formatter()
+    except Exception:  # pragma: no cover
+        pass
+
+
+_register_streaming_formatter()
+
+
 def workflows_widget(workspace_client: Any = None) -> Any:
     """Create an interactive widget for browsing Databricks workflows.
 
