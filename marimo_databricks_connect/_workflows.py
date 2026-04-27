@@ -103,15 +103,17 @@ def _serialize_tasks(tasks: list[Any]) -> list[dict]:
         deps = []
         if getattr(task, "depends_on", None):
             deps = [getattr(d, "task_key", "") for d in task.depends_on]
-        serialized.append({
-            "task_key": getattr(task, "task_key", ""),
-            "type": _task_type(task),
-            "detail": _task_detail(task),
-            "depends_on": deps,
-            "downstream": [],  # filled below
-            "description": getattr(task, "description", None) or None,
-            "disabled": bool(getattr(task, "disabled", False)),
-        })
+        serialized.append(
+            {
+                "task_key": getattr(task, "task_key", ""),
+                "type": _task_type(task),
+                "detail": _task_detail(task),
+                "depends_on": deps,
+                "downstream": [],  # filled below
+                "description": getattr(task, "description", None) or None,
+                "disabled": bool(getattr(task, "disabled", False)),
+            }
+        )
 
     # Build downstream adjacency
     by_key = {t["task_key"]: t for t in serialized}
@@ -127,8 +129,12 @@ def _serialize_tasks(tasks: list[Any]) -> list[dict]:
 def _run_task_state(task: Any) -> dict:
     state = getattr(task, "state", None)
     return {
-        "life_cycle_state": getattr(state, "life_cycle_state", None).value if state and getattr(state, "life_cycle_state", None) else None,
-        "result_state": getattr(state, "result_state", None).value if state and getattr(state, "result_state", None) else None,
+        "life_cycle_state": getattr(state, "life_cycle_state", None).value
+        if state and getattr(state, "life_cycle_state", None)
+        else None,
+        "result_state": getattr(state, "result_state", None).value
+        if state and getattr(state, "result_state", None)
+        else None,
         "state_message": getattr(state, "state_message", None) if state else None,
     }
 
@@ -210,8 +216,12 @@ def _serialize_run(run: Any) -> dict:
         "start_time": _ms_to_iso(getattr(run, "start_time", None)),
         "end_time": _ms_to_iso(getattr(run, "end_time", None)),
         "duration": _duration_str(getattr(run, "run_duration", None)),
-        "life_cycle_state": getattr(state, "life_cycle_state", None).value if state and getattr(state, "life_cycle_state", None) else None,
-        "result_state": getattr(state, "result_state", None).value if state and getattr(state, "result_state", None) else None,
+        "life_cycle_state": getattr(state, "life_cycle_state", None).value
+        if state and getattr(state, "life_cycle_state", None)
+        else None,
+        "result_state": getattr(state, "result_state", None).value
+        if state and getattr(state, "result_state", None)
+        else None,
         "state_message": getattr(state, "state_message", None) if state else None,
         "run_page_url": getattr(run, "run_page_url", None),
         "trigger": getattr(run, "trigger", None).value if getattr(run, "trigger", None) else None,
@@ -249,6 +259,7 @@ class WorkflowsWidget(anywidget.AnyWidget):
         if self._ws is not None:
             return self._ws
         from databricks.sdk import WorkspaceClient
+
         self._ws = WorkspaceClient()
         return self._ws
 
@@ -287,15 +298,17 @@ class WorkflowsWidget(anywidget.AnyWidget):
                 schedule = getattr(settings, "schedule", None) if settings else None
                 tags = getattr(settings, "tags", None) if settings else None
                 task_count = len(settings.tasks) if settings and getattr(settings, "tasks", None) else 0
-                result.append({
-                    "job_id": getattr(j, "job_id", None),
-                    "name": getattr(settings, "name", None) if settings else None,
-                    "created_time": _ms_to_iso(getattr(j, "created_time", None)),
-                    "creator": getattr(j, "creator_user_name", None),
-                    "schedule": getattr(schedule, "quartz_cron_expression", None) if schedule else None,
-                    "tags": dict(tags) if tags else {},
-                    "task_count": task_count,
-                })
+                result.append(
+                    {
+                        "job_id": getattr(j, "job_id", None),
+                        "name": getattr(settings, "name", None) if settings else None,
+                        "created_time": _ms_to_iso(getattr(j, "created_time", None)),
+                        "creator": getattr(j, "creator_user_name", None),
+                        "schedule": getattr(schedule, "quartz_cron_expression", None) if schedule else None,
+                        "tags": dict(tags) if tags else {},
+                        "task_count": task_count,
+                    }
+                )
             self.jobs_data = json.dumps(result)
         except Exception as exc:
             LOGGER.debug("Failed to list jobs", exc_info=True)
@@ -360,17 +373,19 @@ class WorkflowsWidget(anywidget.AnyWidget):
             self.task_output = json.dumps(_serialize_run_output(output))
         except Exception as exc:
             LOGGER.debug("Failed to get output for run %s", run_id, exc_info=True)
-            self.task_output = json.dumps({
-                "error": f"Failed to fetch output: {exc}",
-                "error_trace": None,
-                "logs": None,
-                "logs_truncated": False,
-                "info": None,
-                "notebook_result": None,
-                "notebook_result_truncated": False,
-                "sql_output": None,
-                "dbt_output": None,
-            })
+            self.task_output = json.dumps(
+                {
+                    "error": f"Failed to fetch output: {exc}",
+                    "error_trace": None,
+                    "logs": None,
+                    "logs_truncated": False,
+                    "info": None,
+                    "notebook_result": None,
+                    "notebook_result_truncated": False,
+                    "sql_output": None,
+                    "dbt_output": None,
+                }
+            )
 
     def _load_run_detail(self, run_id: int) -> None:
         self.loading = True
@@ -391,8 +406,12 @@ class WorkflowsWidget(anywidget.AnyWidget):
                 "end_time": _ms_to_iso(getattr(run, "end_time", None)),
                 "duration": _duration_str(getattr(run, "run_duration", None)),
                 "setup_duration": _duration_str(getattr(run, "setup_duration", None)),
-                "life_cycle_state": getattr(state, "life_cycle_state", None).value if state and getattr(state, "life_cycle_state", None) else None,
-                "result_state": getattr(state, "result_state", None).value if state and getattr(state, "result_state", None) else None,
+                "life_cycle_state": getattr(state, "life_cycle_state", None).value
+                if state and getattr(state, "life_cycle_state", None)
+                else None,
+                "result_state": getattr(state, "result_state", None).value
+                if state and getattr(state, "result_state", None)
+                else None,
                 "state_message": getattr(state, "state_message", None) if state else None,
                 "run_page_url": getattr(run, "run_page_url", None),
                 "tasks": tasks,

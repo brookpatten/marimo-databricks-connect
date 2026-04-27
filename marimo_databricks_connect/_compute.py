@@ -222,6 +222,7 @@ class ComputeWidget(anywidget.AnyWidget):
         if self._ws is not None:
             return self._ws
         from databricks.sdk import WorkspaceClient
+
         self._ws = WorkspaceClient()
         return self._ws
 

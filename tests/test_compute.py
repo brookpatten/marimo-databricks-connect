@@ -12,9 +12,17 @@ import pytest
 # ---- Mock builders ----
 
 
-def _make_cluster(cluster_id="abc-123", name="my-cluster", state="RUNNING",
-                  node_type="i3.xlarge", num_workers=4, spark_version="14.3.x-scala2.12",
-                  creator="user@example.com", autoscale=None, tags=None):
+def _make_cluster(
+    cluster_id="abc-123",
+    name="my-cluster",
+    state="RUNNING",
+    node_type="i3.xlarge",
+    num_workers=4,
+    spark_version="14.3.x-scala2.12",
+    creator="user@example.com",
+    autoscale=None,
+    tags=None,
+):
     return SimpleNamespace(
         cluster_id=cluster_id,
         cluster_name=name,
@@ -44,28 +52,36 @@ def _make_cluster(cluster_id="abc-123", name="my-cluster", state="RUNNING",
     )
 
 
-def _make_warehouse(wh_id="wh-001", name="my-warehouse", state="RUNNING",
-                    size="Small", creator="user@example.com"):
+def _make_warehouse(wh_id="wh-001", name="my-warehouse", state="RUNNING", size="Small", creator="user@example.com"):
     return SimpleNamespace(
-        id=wh_id, name=name,
+        id=wh_id,
+        name=name,
         state=SimpleNamespace(value=state),
         cluster_size=size,
-        min_num_clusters=1, max_num_clusters=4, num_clusters=2,
-        num_active_sessions=5, auto_stop_mins=10,
-        enable_photon=True, enable_serverless_compute=False,
+        min_num_clusters=1,
+        max_num_clusters=4,
+        num_clusters=2,
+        num_active_sessions=5,
+        auto_stop_mins=10,
+        enable_photon=True,
+        enable_serverless_compute=False,
         warehouse_type=SimpleNamespace(value="PRO"),
         creator_name=creator,
         health=SimpleNamespace(status=SimpleNamespace(value="HEALTHY"), message=None),
-        tags=SimpleNamespace(custom_tags=[
-            SimpleNamespace(key="env", value="prod"),
-        ]),
+        tags=SimpleNamespace(
+            custom_tags=[
+                SimpleNamespace(key="env", value="prod"),
+            ]
+        ),
     )
 
 
-def _make_vs_endpoint(ep_id="vs-001", name="my-vs-endpoint", state="ONLINE",
-                      num_indexes=3, creator="user@example.com"):
+def _make_vs_endpoint(
+    ep_id="vs-001", name="my-vs-endpoint", state="ONLINE", num_indexes=3, creator="user@example.com"
+):
     return SimpleNamespace(
-        id=ep_id, name=name,
+        id=ep_id,
+        name=name,
         endpoint_status=SimpleNamespace(
             state=SimpleNamespace(value=state),
             message=None,
@@ -79,8 +95,7 @@ def _make_vs_endpoint(ep_id="vs-001", name="my-vs-endpoint", state="ONLINE",
     )
 
 
-def _make_pool(pool_id="pool-001", name="my-pool", state="ACTIVE",
-               node_type="i3.xlarge", min_idle=2, max_cap=10):
+def _make_pool(pool_id="pool-001", name="my-pool", state="ACTIVE", node_type="i3.xlarge", min_idle=2, max_cap=10):
     return SimpleNamespace(
         instance_pool_id=pool_id,
         instance_pool_name=name,
@@ -95,8 +110,7 @@ def _make_pool(pool_id="pool-001", name="my-pool", state="ACTIVE",
     )
 
 
-def _make_policy(policy_id="pol-001", name="default-policy", is_default=True,
-                 creator="admin@example.com"):
+def _make_policy(policy_id="pol-001", name="default-policy", is_default=True, creator="admin@example.com"):
     return SimpleNamespace(
         policy_id=policy_id,
         name=name,
@@ -110,8 +124,7 @@ def _make_policy(policy_id="pol-001", name="default-policy", is_default=True,
     )
 
 
-def _mock_workspace_client(clusters=None, warehouses=None, vs_endpoints=None,
-                            pools=None, policies=None):
+def _mock_workspace_client(clusters=None, warehouses=None, vs_endpoints=None, pools=None, policies=None):
     ws = MagicMock()
     ws.clusters.list.return_value = clusters or []
     ws.warehouses.list.return_value = warehouses or []
@@ -126,6 +139,7 @@ def _mock_workspace_client(clusters=None, warehouses=None, vs_endpoints=None,
 
 def test_serialize_cluster():
     from marimo_databricks_connect._compute import _serialize_cluster
+
     c = _make_cluster(tags={"env": "prod"})
     result = _serialize_cluster(c)
     assert result["cluster_id"] == "abc-123"
@@ -141,6 +155,7 @@ def test_serialize_cluster():
 
 def test_serialize_cluster_with_autoscale():
     from marimo_databricks_connect._compute import _serialize_cluster
+
     autoscale = SimpleNamespace(min_workers=2, max_workers=8)
     c = _make_cluster(autoscale=autoscale)
     result = _serialize_cluster(c)
@@ -149,6 +164,7 @@ def test_serialize_cluster_with_autoscale():
 
 def test_serialize_warehouse():
     from marimo_databricks_connect._compute import _serialize_warehouse
+
     w = _make_warehouse()
     result = _serialize_warehouse(w)
     assert result["id"] == "wh-001"
@@ -163,6 +179,7 @@ def test_serialize_warehouse():
 
 def test_serialize_vs_endpoint():
     from marimo_databricks_connect._compute import _serialize_vs_endpoint
+
     e = _make_vs_endpoint()
     result = _serialize_vs_endpoint(e)
     assert result["id"] == "vs-001"
@@ -173,6 +190,7 @@ def test_serialize_vs_endpoint():
 
 def test_serialize_pool():
     from marimo_databricks_connect._compute import _serialize_pool
+
     p = _make_pool()
     result = _serialize_pool(p)
     assert result["instance_pool_id"] == "pool-001"
@@ -184,6 +202,7 @@ def test_serialize_pool():
 
 def test_serialize_policy():
     from marimo_databricks_connect._compute import _serialize_policy
+
     p = _make_policy()
     result = _serialize_policy(p)
     assert result["policy_id"] == "pol-001"
@@ -197,6 +216,7 @@ def test_serialize_policy():
 
 def test_widget_loads_clusters_on_init():
     from marimo_databricks_connect._compute import ComputeWidget
+
     clusters = [_make_cluster("c1", "cluster-a"), _make_cluster("c2", "cluster-b")]
     ws = _mock_workspace_client(clusters=clusters)
     w = ComputeWidget(workspace_client=ws)
@@ -208,6 +228,7 @@ def test_widget_loads_clusters_on_init():
 
 def test_widget_handles_cluster_error():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = MagicMock()
     ws.clusters.list.side_effect = RuntimeError("auth failed")
     w = ComputeWidget(workspace_client=ws)
@@ -217,6 +238,7 @@ def test_widget_handles_cluster_error():
 
 def test_widget_request_list_warehouses():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = _mock_workspace_client(warehouses=[_make_warehouse()])
     w = ComputeWidget(workspace_client=ws)
     w.request = json.dumps({"action": "list_warehouses"})
@@ -227,6 +249,7 @@ def test_widget_request_list_warehouses():
 
 def test_widget_request_list_vs_endpoints():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = _mock_workspace_client(vs_endpoints=[_make_vs_endpoint()])
     w = ComputeWidget(workspace_client=ws)
     w.request = json.dumps({"action": "list_vs_endpoints"})
@@ -237,6 +260,7 @@ def test_widget_request_list_vs_endpoints():
 
 def test_widget_request_list_pools():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = _mock_workspace_client(pools=[_make_pool()])
     w = ComputeWidget(workspace_client=ws)
     w.request = json.dumps({"action": "list_pools"})
@@ -247,6 +271,7 @@ def test_widget_request_list_pools():
 
 def test_widget_request_list_policies():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = _mock_workspace_client(policies=[_make_policy()])
     w = ComputeWidget(workspace_client=ws)
     w.request = json.dumps({"action": "list_policies"})
@@ -257,6 +282,7 @@ def test_widget_request_list_policies():
 
 def test_widget_refresh_reloads():
     from marimo_databricks_connect._compute import ComputeWidget
+
     ws = _mock_workspace_client(clusters=[_make_cluster()])
     w = ComputeWidget(workspace_client=ws)
     assert ws.clusters.list.call_count == 1
@@ -268,13 +294,16 @@ def test_compute_widget_factory():
     """Test the public API factory function."""
     ws = _mock_workspace_client()
     from marimo_databricks_connect import compute_widget
+
     w = compute_widget(workspace_client=ws)
     from marimo_databricks_connect._compute import ComputeWidget
+
     assert isinstance(w, ComputeWidget)
 
 
 def test_serialize_termination_reason():
     from marimo_databricks_connect._compute import _serialize_cluster
+
     reason = SimpleNamespace(
         code=SimpleNamespace(value="INACTIVITY"),
         parameters=SimpleNamespace(inactivity_duration_min="60"),

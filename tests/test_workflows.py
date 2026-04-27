@@ -11,6 +11,7 @@ import pytest
 
 # ---- Helpers ----
 
+
 def _make_task(task_key, notebook_path=None, depends_on=None, disabled=False):
     t = SimpleNamespace(
         task_key=task_key,
@@ -111,30 +112,45 @@ def _make_run_task(task_key, life_cycle="TERMINATED", result="SUCCESS", run_id=N
 
 # ---- Serialization tests ----
 
+
 def test_task_type_detection():
     from marimo_databricks_connect._workflows import _task_type
+
     t = _make_task("t1", notebook_path="/path/to/nb")
     assert _task_type(t) == "notebook"
 
-    t2 = SimpleNamespace(**{
-        k: None for k in [
-            "notebook_task", "spark_python_task", "python_wheel_task",
-            "spark_jar_task", "spark_submit_task", "pipeline_task",
-            "sql_task", "dbt_task", "run_job_task", "condition_task",
-            "for_each_task", "dashboard_task",
-        ]
-    })
+    t2 = SimpleNamespace(
+        **{
+            k: None
+            for k in [
+                "notebook_task",
+                "spark_python_task",
+                "python_wheel_task",
+                "spark_jar_task",
+                "spark_submit_task",
+                "pipeline_task",
+                "sql_task",
+                "dbt_task",
+                "run_job_task",
+                "condition_task",
+                "for_each_task",
+                "dashboard_task",
+            ]
+        }
+    )
     assert _task_type(t2) == "unknown"
 
 
 def test_task_detail_extracts_notebook_path():
     from marimo_databricks_connect._workflows import _task_detail
+
     t = _make_task("t1", notebook_path="/Repos/user/project/nb")
     assert _task_detail(t) == "/Repos/user/project/nb"
 
 
 def test_serialize_tasks():
     from marimo_databricks_connect._workflows import _serialize_tasks
+
     tasks = [
         _make_task("extract", notebook_path="/nb1"),
         _make_task("etl", notebook_path="/nb2", depends_on=["extract"]),
@@ -163,6 +179,7 @@ def test_serialize_tasks():
 
 def test_serialize_run():
     from marimo_databricks_connect._workflows import _serialize_run
+
     r = _make_base_run(42)
     result = _serialize_run(r)
     assert result["run_id"] == 42
@@ -174,6 +191,7 @@ def test_serialize_run():
 
 def test_serialize_run_task_includes_run_id():
     from marimo_databricks_connect._workflows import _serialize_run_task
+
     rt = _make_run_task("load", result="FAILED", run_id=42)
     result = _serialize_run_task(rt)
     assert result["task_key"] == "load"
@@ -184,6 +202,7 @@ def test_serialize_run_task_includes_run_id():
 
 def test_duration_str():
     from marimo_databricks_connect._workflows import _duration_str
+
     assert _duration_str(None) is None
     assert _duration_str(0) is None
     assert _duration_str(5000) == "5s"
@@ -193,6 +212,7 @@ def test_duration_str():
 
 def test_ms_to_iso():
     from marimo_databricks_connect._workflows import _ms_to_iso
+
     assert _ms_to_iso(None) is None
     result = _ms_to_iso(1700000000000)
     assert result is not None
@@ -201,18 +221,28 @@ def test_ms_to_iso():
 
 # ---- Widget integration tests ----
 
+
 def _mock_workspace_client(jobs=None, job_detail=None, runs=None, run_detail=None):
     ws = MagicMock()
     ws.jobs.list.return_value = jobs or []
     ws.jobs.get.return_value = job_detail or SimpleNamespace(
-        job_id=1, created_time=None, creator_user_name=None,
+        job_id=1,
+        created_time=None,
+        creator_user_name=None,
         settings=_make_job_settings(tasks=[]),
     )
     ws.jobs.list_runs.return_value = runs or []
     ws.jobs.get_run.return_value = run_detail or SimpleNamespace(
-        run_id=1, run_name="r", job_id=1, start_time=None, end_time=None,
-        run_duration=None, setup_duration=None, state=None,
-        run_page_url=None, tasks=[],
+        run_id=1,
+        run_name="r",
+        job_id=1,
+        start_time=None,
+        end_time=None,
+        run_duration=None,
+        setup_duration=None,
+        state=None,
+        run_page_url=None,
+        tasks=[],
     )
     return ws
 
@@ -247,7 +277,9 @@ def test_widget_request_get_job():
 
     tasks = [_make_task("extract", notebook_path="/nb1"), _make_task("load", depends_on=["extract"])]
     job = SimpleNamespace(
-        job_id=99, created_time=1700000000000, creator_user_name="me",
+        job_id=99,
+        created_time=1700000000000,
+        creator_user_name="me",
         settings=_make_job_settings(name="my_pipeline", tasks=tasks, schedule="0 0 * * *"),
     )
     ws = _mock_workspace_client(job_detail=job)
@@ -292,9 +324,13 @@ def test_widget_request_get_run():
         _make_run_task("load", result="FAILED"),
     ]
     run = SimpleNamespace(
-        run_id=55, run_name="run_55", job_id=1,
-        start_time=1700000000000, end_time=1700003600000,
-        run_duration=3600000, setup_duration=10000,
+        run_id=55,
+        run_name="run_55",
+        job_id=1,
+        start_time=1700000000000,
+        end_time=1700003600000,
+        run_duration=3600000,
+        setup_duration=10000,
         state=_make_run_state("TERMINATED", "FAILED"),
         run_page_url="https://databricks.com/run/55",
         tasks=run_tasks,
@@ -337,6 +373,7 @@ def test_widget_job_tags_serialized():
 def test_serialize_tasks_diamond_dag():
     """Test downstream computation with a diamond DAG: A -> B, A -> C, B -> D, C -> D."""
     from marimo_databricks_connect._workflows import _serialize_tasks
+
     tasks = [
         _make_task("A"),
         _make_task("B", depends_on=["A"]),
@@ -357,6 +394,7 @@ def test_serialize_tasks_diamond_dag():
 
 def test_serialize_run_output_with_error():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     output = SimpleNamespace(
         error="Task failed: division by zero",
         error_trace="Traceback (most recent call last):\n  File ...\nZeroDivisionError",
@@ -378,13 +416,14 @@ def test_serialize_run_output_with_error():
 
 def test_serialize_run_output_with_notebook_result():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     output = SimpleNamespace(
         error=None,
         error_trace=None,
         logs="All good\n",
         logs_truncated=True,
         info="Completed successfully",
-        notebook_output=SimpleNamespace(result="{\"count\": 42}", truncated=False),
+        notebook_output=SimpleNamespace(result='{"count": 42}', truncated=False),
         sql_output=None,
         dbt_output=None,
         metadata=None,
@@ -399,15 +438,21 @@ def test_serialize_run_output_with_notebook_result():
 
 def test_serialize_run_output_with_sql_output():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     query_out = SimpleNamespace(
         query_text="SELECT count(*) FROM t",
         output_link="https://databricks.com/sql/results/123",
     )
     output = SimpleNamespace(
-        error=None, error_trace=None, logs=None, logs_truncated=False,
-        info=None, notebook_output=None,
+        error=None,
+        error_trace=None,
+        logs=None,
+        logs_truncated=False,
+        info=None,
+        notebook_output=None,
         sql_output=SimpleNamespace(query_output=query_out, dashboard_output=None, alert_output=None),
-        dbt_output=None, metadata=None,
+        dbt_output=None,
+        metadata=None,
     )
     result = _serialize_run_output(output)
     assert "SELECT count" in result["sql_output"]
@@ -416,9 +461,15 @@ def test_serialize_run_output_with_sql_output():
 
 def test_serialize_run_output_with_dbt_output():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     output = SimpleNamespace(
-        error=None, error_trace=None, logs=None, logs_truncated=False,
-        info=None, notebook_output=None, sql_output=None,
+        error=None,
+        error_trace=None,
+        logs=None,
+        logs_truncated=False,
+        info=None,
+        notebook_output=None,
+        sql_output=None,
         dbt_output=SimpleNamespace(artifacts_link="https://link", artifacts_headers=None),
         metadata=None,
     )
@@ -428,9 +479,16 @@ def test_serialize_run_output_with_dbt_output():
 
 def test_serialize_run_output_empty():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     output = SimpleNamespace(
-        error=None, error_trace=None, logs=None, logs_truncated=False,
-        info=None, notebook_output=None, sql_output=None, dbt_output=None,
+        error=None,
+        error_trace=None,
+        logs=None,
+        logs_truncated=False,
+        info=None,
+        notebook_output=None,
+        sql_output=None,
+        dbt_output=None,
         metadata=None,
     )
     result = _serialize_run_output(output)
@@ -441,10 +499,17 @@ def test_serialize_run_output_empty():
 
 def test_serialize_run_output_extracts_metadata_state_message():
     from marimo_databricks_connect._workflows import _serialize_run_output
+
     meta_state = SimpleNamespace(state_message="Run terminated: MAX_RUN_DURATION_EXCEEDED")
     output = SimpleNamespace(
-        error=None, error_trace=None, logs="some logs", logs_truncated=False,
-        info=None, notebook_output=None, sql_output=None, dbt_output=None,
+        error=None,
+        error_trace=None,
+        logs="some logs",
+        logs_truncated=False,
+        info=None,
+        notebook_output=None,
+        sql_output=None,
+        dbt_output=None,
         metadata=SimpleNamespace(state=meta_state),
     )
     result = _serialize_run_output(output)
@@ -496,6 +561,8 @@ def test_workflows_widget_factory():
     """Test the public API factory function."""
     ws = _mock_workspace_client()
     from marimo_databricks_connect import workflows_widget
+
     w = workflows_widget(workspace_client=ws)
     from marimo_databricks_connect._workflows import WorkflowsWidget
+
     assert isinstance(w, WorkflowsWidget)
