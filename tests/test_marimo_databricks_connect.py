@@ -410,6 +410,55 @@ def test_filter_catalog_wide_exclude_hides_catalog(clean_filter):
     assert f.filter_catalogs(["main", "system"], default_catalog="main") == ["main"]
 
 
+def test_filter_set_includes_replaces(clean_filter):
+    f = clean_filter
+    f.set_includes(["main", "dev"])
+    assert [p.catalog for p in f.includes] == ["main", "dev"]
+    f.set_includes(["prod"])
+    assert [p.catalog for p in f.includes] == ["prod"]
+
+
+def test_filter_set_excludes_replaces(clean_filter):
+    f = clean_filter
+    f.set_excludes(["system"])
+    assert [p.catalog for p in f.excludes] == ["system"]
+    f.set_excludes(["__internal"])
+    assert [p.catalog for p in f.excludes] == ["__internal"]
+
+
+def test_include_catalogs_replaces_previous_call(clean_filter):
+    """Calling include_catalogs() a second time replaces, not appends."""
+    from marimo_databricks_connect import include_catalogs
+
+    include_catalogs("main")
+    include_catalogs("dev_*")
+    f = clean_filter
+    # Only "dev_*" should remain.
+    assert len(f.includes) == 1
+    assert f.includes[0].catalog == "dev_*"
+
+
+def test_exclude_catalogs_replaces_previous_call(clean_filter):
+    from marimo_databricks_connect import exclude_catalogs
+
+    exclude_catalogs("system")
+    exclude_catalogs("__internal")
+    f = clean_filter
+    assert len(f.excludes) == 1
+    assert f.excludes[0].catalog == "__internal"
+
+
+def test_narrowing_from_catalog_wide_to_schema_scoped(clean_filter):
+    """Replacing a catalog-wide include with schema-scoped one filters schemas."""
+    from marimo_databricks_connect import include_catalogs
+
+    include_catalogs("main")  # catalog-wide: all schemas visible
+    assert clean_filter.filter_schemas("main", ["a", "b", "c"]) == ["a", "b", "c"]
+
+    include_catalogs("main.a")  # narrow to schema "a" only
+    assert clean_filter.filter_schemas("main", ["a", "b", "c"]) == ["a"]
+
+
 # ---------- engine + filter integration ------------------------------------
 
 

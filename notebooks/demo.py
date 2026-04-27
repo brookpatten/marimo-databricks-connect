@@ -10,11 +10,11 @@ def _():
     from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs
 
 
-    return exclude_catalogs, external_location, include_catalogs, mo, spark
+    return external_location, include_catalogs, mo, spark
 
 
 @app.cell
-def _(exclude_catalogs, external_location, include_catalogs):
+def _(external_location, include_catalogs):
     # Filter the Data sources panel. Default = current catalog only; add more
     # by name or fnmatch glob. Excludes always win. Filtering is panel-only;
     # SQL execution remains workspace-wide.

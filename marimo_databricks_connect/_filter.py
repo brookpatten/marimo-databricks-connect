@@ -111,6 +111,14 @@ class CatalogFilter:
             if p not in self.excludes:
                 self.excludes.append(p)
 
+    def set_includes(self, patterns: Iterable[str]) -> None:
+        self.includes.clear()
+        self.add_includes(patterns)
+
+    def set_excludes(self, patterns: Iterable[str]) -> None:
+        self.excludes.clear()
+        self.add_excludes(patterns)
+
     def reset(self) -> None:
         self.includes.clear()
         self.excludes.clear()

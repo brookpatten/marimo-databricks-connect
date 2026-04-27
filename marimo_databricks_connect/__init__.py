@@ -146,12 +146,13 @@ mount = external_location
 
 
 def include_catalogs(*patterns: str) -> None:
-    """Add catalog (or ``catalog.schema``) glob patterns to the allow-list.
+    """Set catalog (or ``catalog.schema``) glob patterns for the allow-list.
 
-    The marimo data sources panel will surface only catalogs / schemas matching
-    one of the include patterns (minus anything matched by ``exclude_catalogs``).
-    SQL execution is unaffected — every catalog the workspace has access to
-    remains queryable.
+    Each call **replaces** any previously set include patterns.  The marimo data
+    sources panel will surface only catalogs / schemas matching one of the
+    include patterns (minus anything matched by ``exclude_catalogs``).  SQL
+    execution is unaffected — every catalog the workspace has access to remains
+    queryable.
 
     Examples::
 
@@ -161,19 +162,20 @@ def include_catalogs(*patterns: str) -> None:
     """
     from ._filter import _filter
 
-    _filter.add_includes(patterns)
+    _filter.set_includes(patterns)
 
 
 def exclude_catalogs(*patterns: str) -> None:
-    """Add catalog (or ``catalog.schema``) glob patterns to the deny-list.
+    """Set catalog (or ``catalog.schema``) glob patterns for the deny-list.
 
-    Excludes always take precedence over includes. A catalog-only pattern
-    (``"system"``) hides the entire catalog; a scoped pattern
-    (``"main.__internal_*"``) hides only matching schemas.
+    Each call **replaces** any previously set exclude patterns.  Excludes always
+    take precedence over includes. A catalog-only pattern (``"system"``) hides
+    the entire catalog; a scoped pattern (``"main.__internal_*"``) hides only
+    matching schemas.
     """
     from ._filter import _filter
 
-    _filter.add_excludes(patterns)
+    _filter.set_excludes(patterns)
 
 
 def show_all_catalogs() -> None:
