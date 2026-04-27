@@ -8,6 +8,13 @@ This package provides compatibility for marimo notebooks to use databricks all p
 - Allow browsing of catalogs/schemas/tables/columns in the marimo data sources view
 - Allow browsing of external locations, volumes, and dbfs in the storage browser
 
+### Pyspark
+
+![pyspark](./docs/pyspark.png)
+
+### SQL
+
+![sql](./docs/sql.png)
 
 ## Quickstart
 
@@ -21,7 +28,11 @@ Then in any notebook in this folder:
 
 ```python
 import marimo as mo
-from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs
+from marimo_databricks_connect import (
+    dbfs, dbutils, external_location, spark,
+    exclude_catalogs, include_catalogs, show_all_catalogs,
+    workflows_widget, compute_widget,
+)
 ```
 
 That single import gives you:
@@ -51,6 +62,8 @@ from marimo_databricks_connect import external_location
 landing = external_location("finops_landing")                  # by UC name
 raw     = external_location("abfss://c@acct.dfs.core.windows.net/data")  # by path
 ```
+
+![storage](./docs/storage.png)
 
 Each variable shows up as its own tree in the storage panel.
 
@@ -96,6 +109,55 @@ export MARIMO_DBC_INCLUDE_CATALOGS="main,dev_*"
 export MARIMO_DBC_EXCLUDE_CATALOGS="system"
 export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 ```
+
+![catalogs](./docs/datasources.png)
+
+## Widgets
+
+The package ships two interactive widgets built with [anywidget](https://anywidget.dev/) for exploring your Databricks workspace directly inside marimo notebooks.
+
+### Workflows widget
+
+Browse jobs, drill into tasks, and view run history:
+
+```python
+from marimo_databricks_connect import workflows_widget
+
+widget = workflows_widget()
+widget  # display in cell output
+```
+
+You can also pass an explicit `WorkspaceClient`:
+
+```python
+from databricks.sdk import WorkspaceClient
+
+w = WorkspaceClient(...)
+widget = workflows_widget(workspace_client=w)
+```
+
+![workflows](./docs/workflows.png)
+
+### Compute widget
+
+Browse clusters, SQL warehouses, vector search endpoints, instance pools, and cluster policies in a tabbed interface:
+
+```python
+from marimo_databricks_connect import compute_widget
+
+widget = compute_widget()
+widget  # display in cell output
+```
+
+As with the workflows widget, you can supply your own `WorkspaceClient`:
+
+```python
+widget = compute_widget(workspace_client=w)
+```
+
+Both widgets authenticate using the default Databricks auth chain (env vars, `~/.databrickscfg`, `az login`, etc.) when no explicit client is provided.
+
+![compute](./docs/compute.png)
 
 ## Running
 
