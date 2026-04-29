@@ -341,7 +341,9 @@ class SecretScopeWidget(anywidget.AnyWidget):
             from databricks.sdk.service.workspace import AclPermission
 
             ws = self._get_client()
-            ws.secrets.put_acl(scope=self._scope_name, principal=principal_text, permission=AclPermission(permission_text))
+            ws.secrets.put_acl(
+                scope=self._scope_name, principal=principal_text, permission=AclPermission(permission_text)
+            )
             self._load_permissions()
             self.action_result = json.dumps(
                 {
