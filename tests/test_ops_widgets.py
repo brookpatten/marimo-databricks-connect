@@ -826,6 +826,162 @@ class TestExternalLocationWidget:
 
 
 # ===================================================================
+# SecretScopeWidget tests
+# ===================================================================
+
+
+def _make_secret_scope():
+    return SimpleNamespace(
+        name="demo-scope",
+        backend_type=SimpleNamespace(value="DATABRICKS"),
+        keyvault_metadata=None,
+    )
+
+
+def _make_secret_key(name: str, ts: int = 1700000000000):
+    return SimpleNamespace(key=name, last_updated_timestamp=ts)
+
+
+def _make_secret_acl(principal: str, permission: str = "READ"):
+    return SimpleNamespace(principal=principal, permission=SimpleNamespace(value=permission))
+
+
+class TestSecretScopeWidget:
+    def test_init_loads_scope_and_keys(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.return_value = [
+            _make_secret_key("zeta"),
+            _make_secret_key("alpha"),
+        ]
+        ws.secrets.list_acls.return_value = [_make_secret_acl("alice@example.com", "READ")]
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        scope = json.loads(w.scope_data)
+        keys = json.loads(w.keys_data)
+        assert scope["name"] == "demo-scope"
+        assert scope["backend_type"] == "DATABRICKS"
+        assert [k["key"] for k in keys] == ["alpha", "zeta"]
+        perms = json.loads(w.permissions_data)
+        assert perms[0]["principal"] == "alice@example.com"
+        assert perms[0]["permission"] == "READ"
+
+    def test_get_secret_action_uses_sdk_and_decodes_value(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.return_value = [_make_secret_key("api-token")]
+        ws.secrets.list_acls.return_value = []
+        ws.secrets.get_secret.return_value = SimpleNamespace(
+            key="api-token",
+            value="c3VwZXJzZWNyZXQ=",  # base64("supersecret")
+        )
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        w._get_dbutils = lambda: None
+        w.request = json.dumps({"action": "get_secret", "key": "api-token"})
+        secret = json.loads(w.selected_secret_data)
+        assert secret["key"] == "api-token"
+        assert secret["value"] == "supersecret"
+        ws.secrets.get_secret.assert_called_once_with(scope="demo-scope", key="api-token")
+
+    def test_put_secret_action(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.side_effect = [
+            [_make_secret_key("api-token")],
+            [_make_secret_key("api-token", 1700000100000)],
+        ]
+        ws.secrets.list_acls.return_value = []
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        w.request = json.dumps({"action": "put_secret", "key": "api-token", "value": "new-value"})
+        ws.secrets.put_secret.assert_called_once_with(scope="demo-scope", key="api-token", string_value="new-value")
+        secret = json.loads(w.selected_secret_data)
+        result = json.loads(w.action_result)
+        assert secret["key"] == "api-token"
+        assert secret["value"] == "new-value"
+        assert result["success"] is True
+
+    def test_delete_secret_action(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.side_effect = [
+            [_make_secret_key("api-token")],
+            [],
+        ]
+        ws.secrets.list_acls.return_value = []
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        w.selected_secret_data = json.dumps({"scope": "demo-scope", "key": "api-token", "value": "secret"})
+        w.request = json.dumps({"action": "delete_secret", "key": "api-token"})
+        ws.secrets.delete_secret.assert_called_once_with(scope="demo-scope", key="api-token")
+        result = json.loads(w.action_result)
+        assert json.loads(w.selected_secret_data or "{}") == {}
+        assert result["success"] is True
+
+    def test_put_acl_action(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.return_value = []
+        ws.secrets.list_acls.side_effect = [
+            [_make_secret_acl("alice@example.com", "READ")],
+            [_make_secret_acl("alice@example.com", "MANAGE")],
+        ]
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        w.request = json.dumps({"action": "put_acl", "principal": "alice@example.com", "permission": "MANAGE"})
+        ws.secrets.put_acl.assert_called_once()
+        result = json.loads(w.action_result)
+        perms = json.loads(w.permissions_data)
+        assert result["success"] is True
+        assert perms[0]["permission"] == "MANAGE"
+
+    def test_delete_acl_action(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.return_value = []
+        ws.secrets.list_acls.side_effect = [
+            [_make_secret_acl("alice@example.com", "READ")],
+            [],
+        ]
+        w = SecretScopeWidget(scope_name="demo-scope", workspace_client=ws)
+        w.request = json.dumps({"action": "delete_acl", "principal": "alice@example.com"})
+        ws.secrets.delete_acl.assert_called_once_with(scope="demo-scope", principal="alice@example.com")
+        result = json.loads(w.action_result)
+        perms = json.loads(w.permissions_data)
+        assert result["success"] is True
+        assert perms == []
+
+    def test_scope_not_found(self):
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = []
+        ws.secrets.list_acls.return_value = []
+        w = SecretScopeWidget(scope_name="missing-scope", workspace_client=ws)
+        assert "not found" in w.error_message.lower()
+
+    def test_factory_function(self):
+        from marimo_databricks_connect import secret_scope_widget
+
+        ws = MagicMock()
+        ws.secrets.list_scopes.return_value = [_make_secret_scope()]
+        ws.secrets.list_secrets.return_value = []
+        ws.secrets.list_acls.return_value = []
+        w = secret_scope_widget("demo-scope", workspace_client=ws)
+        from marimo_databricks_connect._secret_scope_widget import SecretScopeWidget
+
+        assert isinstance(w, SecretScopeWidget)
+
+
+# ===================================================================
 # VectorSearchEndpointWidget tests
 # ===================================================================
 
