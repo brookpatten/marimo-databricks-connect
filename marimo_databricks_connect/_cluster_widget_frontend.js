@@ -15,13 +15,11 @@ const OPS_STYLES = `
     color: var(--op-text); background: var(--op-bg);
     border: 1px solid var(--op-border); border-radius: var(--op-radius); overflow: hidden;
   }
-  @media (prefers-color-scheme: dark) {
-    :host { --op-bg: #1e1e1e; --op-bg-alt: #252526; --op-bg-hover: #2d2d30;
+  :host(.dark-theme) { --op-bg: #1e1e1e; --op-bg-alt: #252526; --op-bg-hover: #2d2d30;
       --op-border: #3e3e42; --op-text: #cccccc; --op-text-muted: #888888;
       --op-primary: #4fc3f7; --op-primary-hover: #29b6f6;
       --op-success: #66bb6a; --op-danger: #ef5350;
       --op-warning: #ffca28; --op-info: #4dd0e1; }
-  }
   * { box-sizing: border-box; }
   .op-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--op-bg-alt); border-bottom: 1px solid var(--op-border); flex-wrap: wrap; }
   .op-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
@@ -39,9 +37,9 @@ const OPS_STYLES = `
   .op-loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
   @keyframes op-spin { to { transform: rotate(360deg); } }
   .op-error { padding: 10px 14px; background: #fef2f2; color: var(--op-danger); border-bottom: 1px solid #fecaca; font-size: 12px; }
-  @media (prefers-color-scheme: dark) { .op-error { background: #3b1f1f; border-color: #5c2b2b; } }
+  :host(.dark-theme) .op-error { background: #3b1f1f; border-color: #5c2b2b; }
   .op-success-msg { padding: 10px 14px; background: #f0fdf4; color: var(--op-success); border-bottom: 1px solid #bbf7d0; font-size: 12px; }
-  @media (prefers-color-scheme: dark) { .op-success-msg { background: #1a2e1a; border-color: #2e5c2b; } }
+  :host(.dark-theme) .op-success-msg { background: #1a2e1a; border-color: #2e5c2b; }
   .op-detail { padding: 14px; }
   .op-kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; margin-bottom: 16px; font-size: 12px; }
   .op-kv dt { color: var(--op-text-muted); font-weight: 500; padding: 3px 0; }
@@ -56,13 +54,11 @@ const OPS_STYLES = `
   .op-badge-info { background: #dbeafe; color: #1e40af; }
   .op-badge-warning { background: #fef3c7; color: #92400e; }
   .op-badge-muted { background: #f3f4f6; color: #6b7280; }
-  @media (prefers-color-scheme: dark) {
-    .op-badge-success { background: #064e3b; color: #6ee7b7; }
-    .op-badge-danger { background: #7f1d1d; color: #fca5a5; }
-    .op-badge-info { background: #1e3a5f; color: #93c5fd; }
-    .op-badge-warning { background: #78350f; color: #fcd34d; }
-    .op-badge-muted { background: #374151; color: #9ca3af; }
-  }
+  :host(.dark-theme) .op-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .op-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .op-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
   .op-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--op-border); margin-bottom: 12px; }
   .op-tab { padding: 6px 16px; cursor: pointer; font-size: 12px; font-weight: 500; border: none; background: none; color: var(--op-text-muted); border-bottom: 2px solid transparent; margin-bottom: -2px; font-family: var(--op-font); }
   .op-tab:hover { color: var(--op-text); }
@@ -84,12 +80,10 @@ const OPS_STYLES = `
   .op-state-terminated { background: #f3f4f6; color: #6b7280; }
   .op-state-pending { background: #dbeafe; color: #1e40af; }
   .op-state-error { background: #fee2e2; color: #991b1b; }
-  @media (prefers-color-scheme: dark) {
-    .op-state-running { background: #064e3b; color: #6ee7b7; }
-    .op-state-terminated { background: #374151; color: #9ca3af; }
-    .op-state-pending { background: #1e3a5f; color: #93c5fd; }
-    .op-state-error { background: #7f1d1d; color: #fca5a5; }
-  }
+  :host(.dark-theme) .op-state-running { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .op-state-terminated { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .op-state-pending { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .op-state-error { background: #7f1d1d; color: #fca5a5; }
   /* ---- Edit form ---- */
   .op-form-group { margin-bottom: 14px; }
   .op-form-label { display: block; font-size: 12px; font-weight: 500; color: var(--op-text-muted); margin-bottom: 4px; }
@@ -123,6 +117,10 @@ const OPS_STYLES = `
   .op-init-row input { flex: 1; }
   .op-init-row .kv-del { border: none; background: none; color: var(--op-danger); cursor: pointer; font-size: 14px; padding: 4px; }
   .op-form-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--op-border); }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 // ---- Helpers ----
@@ -148,8 +146,25 @@ const RUNTIME_ENGINES = [
 const INIT_SCRIPT_TYPES = ["volumes", "workspace", "dbfs", "file"];
 
 // ---- Main render ----
+
+function _syncTheme(hostEl) {
+  function isDark() {
+    const attr = document.documentElement.getAttribute("data-app-theme");
+    if (attr === "dark") return true;
+    if (attr === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function apply() { hostEl.classList.toggle("dark-theme", isDark()); }
+  apply();
+  const obs = new MutationObserver(apply);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-app-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  return () => { obs.disconnect(); };
+}
+
 function render({ model, el }) {
   const shadow = el.attachShadow ? el.attachShadow({ mode: "open" }) : el;
+  _syncTheme(el);
   shadow.innerHTML = "";
   const styleEl = document.createElement("style"); styleEl.textContent = OPS_STYLES; shadow.appendChild(styleEl);
   const root = document.createElement("div"); shadow.appendChild(root);
@@ -162,6 +177,7 @@ function render({ model, el }) {
   let confirmAction = null;
   let actionMessage = null;
   let actionIsError = false;
+  let hasRendered = false;
 
   // Edit form state — initialised from cluster data when user opens the Edit tab
   let editState = null;
@@ -260,10 +276,10 @@ function render({ model, el }) {
     if (actionMessage) html += `<div class="${actionIsError?'op-error':'op-success-msg'}">${esc(actionMessage)}</div>`;
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading && currentTab !== "edit") {
+    if (loading && !hasRendered && currentTab !== "edit") {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
 
       // State indicator
       html += `<div class="op-state-indicator op-state-${stateClass(c.state)}">${c.state==='RUNNING'?'🟢':c.state==='TERMINATED'?'⭕':'🔵'} ${esc(c.state||'UNKNOWN')}</div>`;
@@ -347,6 +363,7 @@ function render({ model, el }) {
 
     html += `<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(c.cluster_id||'')}</span></div>`;
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 

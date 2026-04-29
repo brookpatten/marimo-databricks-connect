@@ -13,9 +13,7 @@ const OPS_STYLES = `
     color: var(--op-text); background: var(--op-bg);
     border: 1px solid var(--op-border); border-radius: var(--op-radius); overflow: hidden;
   }
-  @media (prefers-color-scheme: dark) {
-    :host { --op-bg: #1e1e1e; --op-bg-alt: #252526; --op-bg-hover: #2d2d30; --op-border: #3e3e42; --op-text: #cccccc; --op-text-muted: #888888; --op-primary: #4fc3f7; --op-success: #66bb6a; --op-danger: #ef5350; --op-warning: #ffca28; --op-info: #4dd0e1; }
-  }
+  :host(.dark-theme) { --op-bg: #1e1e1e; --op-bg-alt: #252526; --op-bg-hover: #2d2d30; --op-border: #3e3e42; --op-text: #cccccc; --op-text-muted: #888888; --op-primary: #4fc3f7; --op-success: #66bb6a; --op-danger: #ef5350; --op-warning: #ffca28; --op-info: #4dd0e1; }
   * { box-sizing: border-box; }
   .op-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--op-bg-alt); border-bottom: 1px solid var(--op-border); flex-wrap: wrap; }
   .op-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
@@ -29,7 +27,7 @@ const OPS_STYLES = `
   .op-loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
   @keyframes op-spin { to { transform: rotate(360deg); } }
   .op-error { padding: 10px 14px; background: #fef2f2; color: var(--op-danger); border-bottom: 1px solid #fecaca; font-size: 12px; }
-  @media (prefers-color-scheme: dark) { .op-error { background: #3b1f1f; border-color: #5c2b2b; } }
+  :host(.dark-theme) .op-error { background: #3b1f1f; border-color: #5c2b2b; }
   .op-detail { padding: 14px; }
   .op-kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; margin-bottom: 16px; font-size: 12px; }
   .op-kv dt { color: var(--op-text-muted); font-weight: 500; padding: 3px 0; }
@@ -44,12 +42,10 @@ const OPS_STYLES = `
   .op-badge-muted { background: #f3f4f6; color: #6b7280; }
   .op-badge-success { background: #d1fae5; color: #065f46; }
   .op-badge-warning { background: #fef3c7; color: #92400e; }
-  @media (prefers-color-scheme: dark) {
-    .op-badge-info { background: #1e3a5f; color: #93c5fd; }
-    .op-badge-muted { background: #374151; color: #9ca3af; }
-    .op-badge-success { background: #064e3b; color: #6ee7b7; }
-    .op-badge-warning { background: #78350f; color: #fcd34d; }
-  }
+  :host(.dark-theme) .op-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .op-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
   .op-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--op-border); margin-bottom: 12px; }
   .op-tab { padding: 6px 16px; cursor: pointer; font-size: 12px; font-weight: 500; border: none; background: none; color: var(--op-text-muted); border-bottom: 2px solid transparent; margin-bottom: -2px; font-family: var(--op-font); }
   .op-tab:hover { color: var(--op-text); }
@@ -73,12 +69,33 @@ const OPS_STYLES = `
   .op-lineage-center { min-width: 200px; padding: 12px; border: 2px solid var(--op-primary); border-radius: 6px; text-align: center; font-weight: 600; font-family: var(--op-font-mono); font-size: 12px; align-self: center; }
   .op-lineage-arrow { font-size: 20px; color: var(--op-text-muted); align-self: center; }
   .op-status-bar { padding: 6px 14px; font-size: 11px; color: var(--op-text-muted); background: var(--op-bg-alt); border-top: 1px solid var(--op-border); }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 function esc(s) { if (s == null) return ""; const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
 
+
+function _syncTheme(hostEl) {
+  function isDark() {
+    const attr = document.documentElement.getAttribute("data-app-theme");
+    if (attr === "dark") return true;
+    if (attr === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function apply() { hostEl.classList.toggle("dark-theme", isDark()); }
+  apply();
+  const obs = new MutationObserver(apply);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-app-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  return () => { obs.disconnect(); };
+}
+
 function render({ model, el }) {
   const shadow = el.attachShadow ? el.attachShadow({ mode: "open" }) : el;
+  _syncTheme(el);
   const styleEl = document.createElement("style"); styleEl.textContent = OPS_STYLES; shadow.appendChild(styleEl);
   const root = document.createElement("div"); shadow.appendChild(root);
 
@@ -86,6 +103,7 @@ function render({ model, el }) {
   let sampleLoaded = false;
   let lineageLoaded = false;
   let permissionsLoaded = false;
+  let hasRendered = false;
 
   function getTable() { return JSON.parse(model.get("table_data") || "{}"); }
   function getSample() { return JSON.parse(model.get("sample_data") || "{}"); }
@@ -108,11 +126,11 @@ function render({ model, el }) {
 
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading) {
+    if (loading && !hasRendered) {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
       const cols = t.columns || [];
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
 
       html += `<div class="op-tabs">`;
       html += `<button class="op-tab${currentTab==='columns'?' active':''}" data-tab="columns">Columns (${cols.length})</button>`;
@@ -228,6 +246,7 @@ function render({ model, el }) {
     }
 
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 

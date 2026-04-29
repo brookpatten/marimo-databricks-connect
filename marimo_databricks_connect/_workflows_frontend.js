@@ -40,8 +40,7 @@ const STYLES = `
     overflow: hidden;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :host {
+  :host(.dark-theme) {
       --wf-bg: #1e1e1e;
       --wf-bg-alt: #252526;
       --wf-bg-hover: #2d2d30;
@@ -60,7 +59,6 @@ const STYLES = `
       --dag-edge: #555;
       --dag-edge-arrow: #888;
     }
-  }
 
   * { box-sizing: border-box; }
 
@@ -94,7 +92,7 @@ const STYLES = `
   @keyframes wf-spin { to { transform: rotate(360deg); } }
 
   .wf-error { padding: 10px 14px; background: #fef2f2; color: var(--wf-danger); border-bottom: 1px solid #fecaca; font-size: 12px; }
-  @media (prefers-color-scheme: dark) { .wf-error { background: #3b1f1f; border-color: #5c2b2b; } }
+  :host(.dark-theme) .wf-error { background: #3b1f1f; border-color: #5c2b2b; }
 
   .wf-empty { padding: 30px; text-align: center; color: var(--wf-text-muted); }
 
@@ -117,13 +115,11 @@ const STYLES = `
   .wf-badge-warning { background: #fef3c7; color: #92400e; }
   .wf-badge-info    { background: #dbeafe; color: #1e40af; }
   .wf-badge-muted   { background: #f3f4f6; color: #6b7280; }
-  @media (prefers-color-scheme: dark) {
-    .wf-badge-success { background: #064e3b; color: #6ee7b7; }
-    .wf-badge-danger  { background: #7f1d1d; color: #fca5a5; }
-    .wf-badge-warning { background: #78350f; color: #fcd34d; }
-    .wf-badge-info    { background: #1e3a5f; color: #93c5fd; }
-    .wf-badge-muted   { background: #374151; color: #9ca3af; }
-  }
+  :host(.dark-theme) .wf-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .wf-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .wf-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .wf-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .wf-badge-muted { background: #374151; color: #9ca3af; }
 
   /* ---- Detail panels ---- */
   .wf-detail { padding: 14px; }
@@ -320,6 +316,10 @@ const STYLES = `
   .wf-table tr.task-selected td {
     background: color-mix(in srgb, var(--wf-primary) 10%, var(--wf-bg));
   }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--wf-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--wf-border); border-top-color: var(--wf-primary); border-radius: 50%; animation: wf-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 // ===================================================================
@@ -926,8 +926,25 @@ function renderOutputPanel(taskKey, isLoading, model) {
 
 const VIEW = { JOBS: "jobs", JOB: "job", RUN: "run" };
 
+
+function _syncTheme(hostEl) {
+  function isDark() {
+    const attr = document.documentElement.getAttribute("data-app-theme");
+    if (attr === "dark") return true;
+    if (attr === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function apply() { hostEl.classList.toggle("dark-theme", isDark()); }
+  apply();
+  const obs = new MutationObserver(apply);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-app-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  return () => { obs.disconnect(); };
+}
+
 function render({ model, el }) {
   const shadow = el.attachShadow ? el.attachShadow({ mode: "open" }) : el;
+  _syncTheme(el);
   const styleEl = document.createElement("style");
   styleEl.textContent = STYLES;
   shadow.appendChild(styleEl);
@@ -941,6 +958,7 @@ function render({ model, el }) {
   let currentRunId = null;
   let searchValue = "";
   let cleanupRunView = null;
+  let hasRendered = false;
 
   function buildHeader() {
     let html = `<div class="wf-header"><h2>⚡ Workflows</h2><div class="wf-breadcrumb">`;
@@ -972,10 +990,14 @@ function render({ model, el }) {
       root.querySelector(".wf-body").before(errDiv);
     }
 
-    if (model.get("loading")) {
+    if (model.get("loading") && !hasRendered) {
       root.querySelector(".wf-body").innerHTML = `<div class="wf-loading"><span class="spinner"></span> Loading…</div>`;
       bindHeaderEvents();
       return;
+    }
+
+    if (model.get("loading")) {
+      root.querySelector(".wf-body").classList.add("op-loading-overlay");
     }
 
     if (currentView === VIEW.JOBS) {
@@ -993,6 +1015,7 @@ function render({ model, el }) {
     }
 
     bindHeaderEvents();
+    hasRendered = true;
   }
 
   function bindHeaderEvents() {

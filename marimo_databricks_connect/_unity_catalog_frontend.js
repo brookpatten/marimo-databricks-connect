@@ -29,14 +29,12 @@ const STYLES = `
     border-radius: var(--uc-radius);
     overflow: hidden;
   }
-  @media (prefers-color-scheme: dark) {
-    :host {
+  :host(.dark-theme) {
       --uc-bg: #1e1e1e; --uc-bg-alt: #252526; --uc-bg-hover: #2d2d30;
       --uc-border: #3e3e42; --uc-text: #cccccc; --uc-text-muted: #888888;
       --uc-primary: #4fc3f7; --uc-success: #66bb6a; --uc-danger: #ef5350;
       --uc-warning: #ffca28; --uc-info: #4dd0e1;
     }
-  }
   * { box-sizing: border-box; }
 
   .uc-header {
@@ -91,9 +89,7 @@ const STYLES = `
     padding: 10px 14px; background: #fef2f2; color: var(--uc-danger);
     border-bottom: 1px solid #fecaca; font-size: 12px;
   }
-  @media (prefers-color-scheme: dark) {
-    .uc-error { background: #3b1f1f; border-color: #5c2b2b; }
-  }
+  :host(.dark-theme) .uc-error { background: #3b1f1f; border-color: #5c2b2b; }
 
   .uc-empty { padding: 30px; text-align: center; color: var(--uc-text-muted); }
 
@@ -142,15 +138,13 @@ const STYLES = `
   .uc-badge-muted   { background: #f3f4f6; color: #6b7280; }
   .uc-badge-table   { background: #ede9fe; color: #5b21b6; }
   .uc-badge-view    { background: #fce7f3; color: #9d174d; }
-  @media (prefers-color-scheme: dark) {
-    .uc-badge-success { background: #064e3b; color: #6ee7b7; }
-    .uc-badge-danger  { background: #7f1d1d; color: #fca5a5; }
-    .uc-badge-warning { background: #78350f; color: #fcd34d; }
-    .uc-badge-info    { background: #1e3a5f; color: #93c5fd; }
-    .uc-badge-muted   { background: #374151; color: #9ca3af; }
-    .uc-badge-table   { background: #4c1d95; color: #c4b5fd; }
-    .uc-badge-view    { background: #831843; color: #f9a8d4; }
-  }
+  :host(.dark-theme) .uc-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .uc-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .uc-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .uc-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .uc-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .uc-badge-table { background: #4c1d95; color: #c4b5fd; }
+  :host(.dark-theme) .uc-badge-view { background: #831843; color: #f9a8d4; }
 
   /* Detail panel */
   .uc-detail-panel {
@@ -298,6 +292,10 @@ const STYLES = `
     display: inline-block; margin-left: 4px; font-size: 10px;
     color: var(--uc-primary); vertical-align: middle;
   }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--uc-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--uc-border); border-top-color: var(--uc-primary); border-radius: 50%; animation: uc-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 // ---- Helpers ----
@@ -441,8 +439,25 @@ const TABS = [
 // Main render
 // ===================================================================
 
+
+function _syncTheme(hostEl) {
+  function isDark() {
+    const attr = document.documentElement.getAttribute("data-app-theme");
+    if (attr === "dark") return true;
+    if (attr === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function apply() { hostEl.classList.toggle("dark-theme", isDark()); }
+  apply();
+  const obs = new MutationObserver(apply);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-app-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  return () => { obs.disconnect(); };
+}
+
 function render({ model, el }) {
   const shadow = el.attachShadow ? el.attachShadow({ mode: "open" }) : el;
+  _syncTheme(el);
   const styleEl = document.createElement("style");
   styleEl.textContent = STYLES;
   shadow.appendChild(styleEl);
@@ -467,6 +482,7 @@ function render({ model, el }) {
   let selectedCred = null;
   let selectedConn = null;
   let selectedMeta = null;
+  let hasRendered = false;
 
   // Per-view filter/sort state
   const vs = {
@@ -521,9 +537,9 @@ function render({ model, el }) {
     if (err) html += '<div class="uc-error">' + esc(err) + "</div>";
 
     // Body
-    html += '<div class="uc-body">';
+    html += '<div class="uc-body' + (model.get("loading") && hasRendered ? ' op-loading-overlay' : '') + '">';
 
-    if (model.get("loading")) {
+    if (model.get("loading") && !hasRendered) {
       html += '<div class="uc-loading"><span class="spinner"></span> Loading\u2026</div>';
     } else {
       if (activeTab === "catalog_browser") {
@@ -541,6 +557,7 @@ function render({ model, el }) {
 
     html += "</div>"; // body
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 
