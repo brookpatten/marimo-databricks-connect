@@ -7,15 +7,29 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs
+    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, include_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget
 
 
-    return external_location, include_catalogs, mo, spark
+    return (
+        external_location,
+        external_location_widget,
+        include_catalogs,
+        mo,
+        secret_scope_widget,
+        spark,
+    )
 
 
 @app.cell
 def _(external_location):
     es = external_location("abfss://devops@foo.dfs.core.windows.net")
+    return
+
+
+@app.cell
+def _(secret_scope_widget):
+    widget = secret_scope_widget("secrets")
+    widget
     return
 
 
@@ -63,6 +77,12 @@ def _():
     from marimo_databricks_connect import unity_catalog_widget
 
     unity_catalog_widget()
+    return
+
+
+@app.cell
+def _(external_location_widget):
+    external_location_widget("__databricks_managed_storage_location")
     return
 
 

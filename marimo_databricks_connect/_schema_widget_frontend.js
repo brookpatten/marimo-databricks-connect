@@ -54,18 +54,84 @@ function esc(s) { if (s == null) return ""; const d = document.createElement("di
 
 
 function _syncTheme(hostEl) {
-  function isDark() {
-    const attr = document.documentElement.getAttribute("data-app-theme");
-    if (attr === "dark") return true;
-    if (attr === "light") return false;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  hostEl.__cleanupThemeSync?.();
+
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const themeSelector = "[data-app-theme], [data-theme], .dark, .dark-theme, .light, .light-theme";
+
+  function parseTheme(value) {
+    if (!value) return null;
+    const v = String(value).toLowerCase();
+    if (v.includes("dark")) return true;
+    if (v.includes("light")) return false;
+    return null;
   }
-  function apply() { hostEl.classList.toggle("dark-theme", isDark()); }
+
+  function backgroundLooksDark(el) {
+    if (!el) return null;
+    const bg = getComputedStyle(el).backgroundColor;
+    const m = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    if (!m) return null;
+    const [, r, g, b] = m.map(Number);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luminance < 0.5;
+  }
+
+  function themeFromElement(el) {
+    if (!el) return null;
+    const attrTheme = parseTheme(el.getAttribute?.("data-app-theme"));
+    if (attrTheme != null) return attrTheme;
+    const dataTheme = parseTheme(el.getAttribute?.("data-theme"));
+    if (dataTheme != null) return dataTheme;
+    const classTheme = parseTheme(el.className);
+    if (classTheme != null) return classTheme;
+    const schemeTheme = parseTheme(getComputedStyle(el).colorScheme);
+    if (schemeTheme != null) return schemeTheme;
+    return null;
+  }
+
+  function isDark() {
+    const themedAncestor = hostEl.closest?.(themeSelector);
+    return themeFromElement(themedAncestor)
+      ?? themeFromElement(hostEl)
+      ?? themeFromElement(hostEl.parentElement)
+      ?? themeFromElement(document.body)
+      ?? themeFromElement(document.documentElement)
+      ?? backgroundLooksDark(hostEl.parentElement)
+      ?? backgroundLooksDark(document.body)
+      ?? media.matches;
+  }
+
+  function apply() {
+    const dark = isDark();
+    hostEl.classList.toggle("dark-theme", dark);
+    hostEl.style.colorScheme = dark ? "dark" : "light";
+  }
+
   apply();
+
   const obs = new MutationObserver(apply);
-  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-app-theme"] });
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
-  return () => { obs.disconnect(); };
+  const observed = new Set();
+  function observe(el) {
+    if (!el || observed.has(el)) return;
+    obs.observe(el, { attributes: true, attributeFilter: ["data-app-theme", "data-theme", "class", "style"] });
+    observed.add(el);
+  }
+
+  observe(document.documentElement);
+  observe(document.body);
+  observe(hostEl.parentElement);
+  observe(hostEl.closest?.(themeSelector));
+
+  media.addEventListener("change", apply);
+
+  const cleanup = () => {
+    obs.disconnect();
+    media.removeEventListener("change", apply);
+    if (hostEl.__cleanupThemeSync === cleanup) delete hostEl.__cleanupThemeSync;
+  };
+  hostEl.__cleanupThemeSync = cleanup;
+  return cleanup;
 }
 
 function render({ model, el }) {

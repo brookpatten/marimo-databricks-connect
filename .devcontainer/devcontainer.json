@@ -7,7 +7,7 @@
 		// IMPORTANT! your container will fail to start if the path in your WSL does not exist!
 		// use git credentials from the host wsl
 		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,type=bind",
-		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.local/share/uv,target=/home/vscode/.local/share/uv,type=bind"
+		//"source=${localEnv:HOME}${localEnv:USERPROFILE}/.local/share/uv,target=/home/vscode/.local/share/uv,type=bind"
 	],
 	"runArgs": ["--name", "marimo-databricks-connect"],
 	"features": {
