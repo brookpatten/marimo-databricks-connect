@@ -64,6 +64,10 @@ const OPS_STYLES = `
   /* Traffic bar */
   .op-traffic-bar { display: flex; height: 24px; border-radius: 4px; overflow: hidden; margin: 8px 0; border: 1px solid var(--op-border); }
   .op-traffic-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #fff; }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 function esc(s) { if (s == null) return ""; const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
@@ -94,6 +98,7 @@ function render({ model, el }) {
 
   let currentTab = "overview";
   let autoRefreshEnabled = true, autoTimer = null;
+  let hasRendered = false;
   let queryPayload = '{\n  "dataframe_records": [\n    {"feature1": 1.0, "feature2": 2.0}\n  ]\n}';
 
   function getEP() { return JSON.parse(model.get("endpoint_data") || "{}"); }
@@ -118,10 +123,10 @@ function render({ model, el }) {
 
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading) {
+    if (loading && !hasRendered) {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
 
       html += `<div class="op-state-indicator op-state-${stateClass(ep.state)}">${stateIcon(ep.state)} ${esc(ep.state||'UNKNOWN')}</div>`;
       if (ep.config_update) html += `<div class="op-muted" style="margin-bottom:12px">Config update: ${esc(ep.config_update)}</div>`;
@@ -198,6 +203,7 @@ function render({ model, el }) {
 
     html += `<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(ep.name||'')}</span></div>`;
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 

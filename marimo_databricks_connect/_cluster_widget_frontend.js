@@ -117,6 +117,10 @@ const OPS_STYLES = `
   .op-init-row input { flex: 1; }
   .op-init-row .kv-del { border: none; background: none; color: var(--op-danger); cursor: pointer; font-size: 14px; padding: 4px; }
   .op-form-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--op-border); }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 // ---- Helpers ----
@@ -173,6 +177,7 @@ function render({ model, el }) {
   let confirmAction = null;
   let actionMessage = null;
   let actionIsError = false;
+  let hasRendered = false;
 
   // Edit form state — initialised from cluster data when user opens the Edit tab
   let editState = null;
@@ -271,10 +276,10 @@ function render({ model, el }) {
     if (actionMessage) html += `<div class="${actionIsError?'op-error':'op-success-msg'}">${esc(actionMessage)}</div>`;
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading && currentTab !== "edit") {
+    if (loading && !hasRendered && currentTab !== "edit") {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
 
       // State indicator
       html += `<div class="op-state-indicator op-state-${stateClass(c.state)}">${c.state==='RUNNING'?'🟢':c.state==='TERMINATED'?'⭕':'🔵'} ${esc(c.state||'UNKNOWN')}</div>`;
@@ -358,6 +363,7 @@ function render({ model, el }) {
 
     html += `<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(c.cluster_id||'')}</span></div>`;
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 

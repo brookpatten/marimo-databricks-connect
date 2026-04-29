@@ -62,6 +62,8 @@ const S = `
   .op-embed-card-title{font-weight:600;font-size:12px;margin-bottom:4px;font-family:var(--op-font-mono)}
   .op-embed-card-detail{font-size:11px;color:var(--op-text-muted)}
   .op-row-count{font-size:24px;font-weight:700;color:var(--op-primary)}
+
+.op-loading-overlay{position:relative;pointer-events:none;opacity:.6}.op-loading-overlay::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:var(--op-bg);opacity:.5;z-index:10}.op-loading-overlay::before{content:'';position:absolute;top:50%;left:50%;width:20px;height:20px;margin:-10px 0 0 -10px;border:2px solid var(--op-border);border-top-color:var(--op-primary);border-radius:50%;animation:op-spin .6s linear infinite;z-index:11}
 `;
 
 function esc(s){if(s==null)return"";const d=document.createElement("div");d.textContent=String(s);return d.innerHTML}
@@ -78,6 +80,7 @@ function render({model,el}){
   let currentTab="status",sampleLoaded=false,permissionsLoaded=false,lineageLoaded=false;
   let autoRefreshEnabled=true,autoTimer=null;
   let confirmAction=null,actionMessage=null,actionIsError=false;
+  let hasRendered=false;
 
   function getIdx(){return JSON.parse(model.get("index_data")||"{}")}
   function getSample(){return JSON.parse(model.get("sample_data")||"{}")}
@@ -105,10 +108,10 @@ function render({model,el}){
     if(actionMessage)h+=`<div class="${actionIsError?'op-error':'op-success-msg'}">${esc(actionMessage)}</div>`;
     if(error)h+=`<div class="op-error">${esc(error)}</div>`;
 
-    if(loading){
+    if(loading&&!hasRendered){
       h+=`<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     }else{
-      h+=`<div class="op-body"><div class="op-detail">`;
+      h+=`<div class="op-body${loading?' op-loading-overlay':''}"><div class="op-detail">`;
 
       // State
       const stCls=isReady?"ready":(i.status_ready===false?"notready":"unknown");
@@ -237,7 +240,7 @@ function render({model,el}){
       h+=`</div></div>`;
     }
     h+=`<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(i.name||'')}</span></div>`;
-    root.innerHTML=h;bind();
+    root.innerHTML=h;hasRendered=true;bind();
   }
 
   function bind(){

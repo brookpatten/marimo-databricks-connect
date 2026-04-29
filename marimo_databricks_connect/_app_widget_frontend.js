@@ -76,6 +76,8 @@ table.op-table{width:100%;border-collapse:collapse}
 .op-thumb-sm{width:48px;height:48px;object-fit:cover;border-radius:var(--op-radius);border:1px solid var(--op-border)}
 .op-thumb-current{max-width:300px;max-height:300px;border:1px solid var(--op-border);border-radius:var(--op-radius);margin:8px 0}
 .op-file-input{margin:8px 0}
+
+.op-loading-overlay{position:relative;pointer-events:none;opacity:.6}.op-loading-overlay::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:var(--op-bg);opacity:.5;z-index:10}.op-loading-overlay::before{content:'';position:absolute;top:50%;left:50%;width:20px;height:20px;margin:-10px 0 0 -10px;border:2px solid var(--op-border);border-top-color:var(--op-primary);border-radius:50%;animation:op-spin .6s linear infinite;z-index:11}
 `;
 
 function esc(s){if(s==null)return"";const d=document.createElement("div");d.textContent=String(s);return d.innerHTML}
@@ -98,6 +100,7 @@ function render({model,el}){
   let permEditState=null; // [{principal,type,level}]
   let deployForm=null; // {source_code_path,mode}
   let thumbnailFile=null; // base64 string
+  let hasRendered=false;
 
   function getApp(){return JSON.parse(model.get("app_data")||"{}")}
   function getThumb(){try{return JSON.parse(model.get("thumbnail_data")||"{}")}catch(e){return{}}}
@@ -126,9 +129,9 @@ function render({model,el}){
     if(actionMessage)h+=`<div class="${actionIsError?'op-error':'op-success-msg'}">${esc(actionMessage)}</div>`;
     if(error)h+=`<div class="op-error">${esc(error)}</div>`;
 
-    if(loading){h+=`<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`}
+    if(loading&&!hasRendered){h+=`<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`}
     else{
-      h+=`<div class="op-body"><div class="op-detail">`;
+      h+=`<div class="op-body${loading?' op-loading-overlay':''}"><div class="op-detail">`;
       // State + thumbnail
       h+=`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">`;
       const thumb=getThumb();
@@ -274,7 +277,7 @@ function render({model,el}){
       h+=`</div></div>`;
     }
     h+=`<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(a.name||'')}</span></div>`;
-    root.innerHTML=h;bindEvents();
+    root.innerHTML=h;hasRendered=true;bindEvents();
   }
 
   function bindEvents(){

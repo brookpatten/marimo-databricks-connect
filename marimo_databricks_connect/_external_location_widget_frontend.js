@@ -54,6 +54,10 @@ const OPS_STYLES = `
   .op-breadcrumb button { background: none; border: none; color: var(--op-primary); cursor: pointer; font-size: 12px; padding: 0; font-family: var(--op-font); }
   .op-breadcrumb button:hover { text-decoration: underline; }
   .op-file-icon { margin-right: 4px; }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 function esc(s) { if (s == null) return ""; const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
@@ -106,6 +110,7 @@ function render({ model, el }) {
   let browseHistory = [];  // [{path, name}]
   let permissionsLoaded = false;
   let validationLoaded = false;
+  let hasRendered = false;
 
   function getLoc() { return JSON.parse(model.get("location_data") || "{}"); }
   function getContents() { return JSON.parse(model.get("contents_data") || "{}"); }
@@ -133,10 +138,10 @@ function render({ model, el }) {
 
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading) {
+    if (loading && !hasRendered) {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
 
       // Tabs — hide permissions/validate for raw paths
       html += `<div class="op-tabs">`;
@@ -239,6 +244,7 @@ function render({ model, el }) {
     }
 
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 

@@ -49,6 +49,8 @@ const S = `
   .op-metric-value{font-size:20px;font-weight:700;color:var(--op-primary)}
   .op-metric-ts{font-size:10px;color:var(--op-text-muted)}
   .op-metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+
+.op-loading-overlay{position:relative;pointer-events:none;opacity:.6}.op-loading-overlay::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:var(--op-bg);opacity:.5;z-index:10}.op-loading-overlay::before{content:'';position:absolute;top:50%;left:50%;width:20px;height:20px;margin:-10px 0 0 -10px;border:2px solid var(--op-border);border-top-color:var(--op-primary);border-radius:50%;animation:op-spin .6s linear infinite;z-index:11}
 `;
 
 function esc(s){if(s==null)return"";const d=document.createElement("div");d.textContent=String(s);return d.innerHTML}
@@ -66,6 +68,7 @@ function render({model,el}){
 
   let currentTab="details",indexesLoaded=false,metricsLoaded=false;
   let autoRefreshEnabled=true,autoTimer=null;
+  let hasRendered=false;
 
   function getEP(){return JSON.parse(model.get("endpoint_data")||"{}")}
   function getIndexes(){return JSON.parse(model.get("indexes_data")||"[]")}
@@ -85,10 +88,10 @@ function render({model,el}){
     h+=`</div></div>`;
     if(error)h+=`<div class="op-error">${esc(error)}</div>`;
 
-    if(loading){
+    if(loading&&!hasRendered){
       h+=`<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     }else{
-      h+=`<div class="op-body"><div class="op-detail">`;
+      h+=`<div class="op-body${loading?' op-loading-overlay':''}"><div class="op-detail">`;
       h+=`<div class="op-state-indicator op-state-${stateCls(ep.state)}">${stateIcon(ep.state)} ${esc(ep.state||'UNKNOWN')}</div>`;
       if(ep.state_message)h+=`<div class="op-muted" style="margin-bottom:12px">${esc(ep.state_message)}</div>`;
 
@@ -158,6 +161,7 @@ function render({model,el}){
     }
     h+=`<div class="op-status-bar"><span>Last refresh: ${new Date().toLocaleTimeString()}</span><span>${esc(ep.name||'')}</span></div>`;
     root.innerHTML=h;
+    hasRendered=true;
     bind();
   }
 

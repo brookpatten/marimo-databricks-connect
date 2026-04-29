@@ -44,6 +44,10 @@ const OPS_STYLES = `
   .op-muted { color: var(--op-text-muted); font-size: 12px; }
   .op-tag { display: inline-block; padding: 1px 6px; margin: 1px 3px 1px 0; border-radius: 3px; font-size: 11px; background: var(--op-bg-alt); border: 1px solid var(--op-border); font-family: var(--op-font-mono); }
   .op-empty { padding: 30px; text-align: center; color: var(--op-text-muted); }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--op-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--op-border); border-top-color: var(--op-primary); border-radius: 50%; animation: op-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 function esc(s) { if (s == null) return ""; const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
@@ -73,6 +77,7 @@ function render({ model, el }) {
   let currentTab = "tables";
   let volumesLoaded = false;
   let permissionsLoaded = false;
+  let hasRendered = false;
 
   function getSchema() { return JSON.parse(model.get("schema_data") || "{}"); }
   function getTables() { return JSON.parse(model.get("tables_data") || "[]"); }
@@ -90,10 +95,10 @@ function render({ model, el }) {
     html += `<div class="op-header-actions"><button class="op-btn" data-action="refresh">↻</button></div></div>`;
     if (error) html += `<div class="op-error">${esc(error)}</div>`;
 
-    if (loading) {
+    if (loading && !hasRendered) {
       html += `<div class="op-body"><div class="op-loading"><span class="spinner"></span> Loading…</div></div>`;
     } else {
-      html += `<div class="op-body"><div class="op-detail">`;
+      html += `<div class="op-body${loading ? ' op-loading-overlay' : ''}"><div class="op-detail">`;
       html += `<div class="op-tabs">`;
       html += `<button class="op-tab${currentTab==='tables'?' active':''}" data-tab="tables">Tables (${tables.length})</button>`;
       html += `<button class="op-tab${currentTab==='volumes'?' active':''}" data-tab="volumes">Volumes</button>`;
@@ -162,6 +167,7 @@ function render({ model, el }) {
     }
 
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 
