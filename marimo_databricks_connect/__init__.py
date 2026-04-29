@@ -53,6 +53,7 @@ __all__ = [
     "warehouse_widget",
     "serving_endpoint_widget",
     "external_location_widget",
+    "secret_scope_widget",
     "vector_search_endpoint_widget",
     "vector_index_widget",
     "app_widget",
@@ -505,6 +506,28 @@ def external_location_widget(location_name: str, workspace_client: Any = None) -
     from ._external_location_widget import ExternalLocationWidget
 
     return ExternalLocationWidget(location_name=location_name, workspace_client=workspace_client)
+
+
+def secret_scope_widget(scope_name: str, workspace_client: Any = None) -> Any:
+    """Create an operational widget for a single Databricks secret scope.
+
+    Displays scope metadata, the list of keys in the scope, and lets
+    users fetch a selected secret into a masked textbox with copy/show
+    controls.
+
+    Args:
+        scope_name: The Databricks secret scope name.
+        workspace_client: Optional ``WorkspaceClient``.
+
+    Example::
+
+        from marimo_databricks_connect import secret_scope_widget
+        widget = secret_scope_widget("my-scope")
+        widget
+    """
+    from ._secret_scope_widget import SecretScopeWidget
+
+    return SecretScopeWidget(scope_name=scope_name, workspace_client=workspace_client)
 
 
 def vector_search_endpoint_widget(endpoint_name: str, workspace_client: Any = None, refresh_seconds: int = 30) -> Any:
