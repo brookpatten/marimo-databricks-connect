@@ -27,14 +27,12 @@ const STYLES = `
     border-radius: var(--cb-radius);
     overflow: hidden;
   }
-  @media (prefers-color-scheme: dark) {
-    :host {
+  :host(.dark-theme) {
       --cb-bg: #1e1e1e; --cb-bg-alt: #252526; --cb-bg-hover: #2d2d30;
       --cb-border: #3e3e42; --cb-text: #cccccc; --cb-text-muted: #888888;
       --cb-primary: #4fc3f7; --cb-success: #66bb6a; --cb-danger: #ef5350;
       --cb-warning: #ffca28; --cb-info: #4dd0e1;
     }
-  }
   * { box-sizing: border-box; }
 
   .cb-header {
@@ -83,9 +81,7 @@ const STYLES = `
     padding: 10px 14px; background: #fef2f2; color: var(--cb-danger);
     border-bottom: 1px solid #fecaca; font-size: 12px;
   }
-  @media (prefers-color-scheme: dark) {
-    .cb-error { background: #3b1f1f; border-color: #5c2b2b; }
-  }
+  :host(.dark-theme) .cb-error { background: #3b1f1f; border-color: #5c2b2b; }
 
   .cb-empty { padding: 30px; text-align: center; color: var(--cb-text-muted); }
 
@@ -120,13 +116,11 @@ const STYLES = `
   .cb-badge-warning { background: #fef3c7; color: #92400e; }
   .cb-badge-info    { background: #dbeafe; color: #1e40af; }
   .cb-badge-muted   { background: #f3f4f6; color: #6b7280; }
-  @media (prefers-color-scheme: dark) {
-    .cb-badge-success { background: #064e3b; color: #6ee7b7; }
-    .cb-badge-danger  { background: #7f1d1d; color: #fca5a5; }
-    .cb-badge-warning { background: #78350f; color: #fcd34d; }
-    .cb-badge-info    { background: #1e3a5f; color: #93c5fd; }
-    .cb-badge-muted   { background: #374151; color: #9ca3af; }
-  }
+  :host(.dark-theme) .cb-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .cb-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .cb-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .cb-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .cb-badge-muted { background: #374151; color: #9ca3af; }
 
   /* Detail panel */
   .cb-detail-panel {
@@ -168,6 +162,10 @@ const STYLES = `
     word-break: break-all; background: var(--cb-bg); border-radius: 4px;
     border: 1px solid var(--cb-border); max-height: 260px; overflow: auto;
   }
+
+  .op-loading-overlay { position: relative; pointer-events: none; opacity: 0.6; }
+  .op-loading-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--cb-bg); opacity: 0.5; z-index: 10; }
+  .op-loading-overlay::before { content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border: 2px solid var(--cb-border); border-top-color: var(--cb-primary); border-radius: 50%; animation: cb-spin 0.6s linear infinite; z-index: 11; }
 `;
 
 // ---- Helpers ----
@@ -441,8 +439,91 @@ const TAB_RENDERERS = {
 // Main render
 // ===================================================================
 
+
+function _syncTheme(hostEl) {
+  hostEl.__cleanupThemeSync?.();
+
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const themeSelector = "[data-app-theme], [data-theme], .dark, .dark-theme, .light, .light-theme";
+
+  function parseTheme(value) {
+    if (!value) return null;
+    const v = String(value).toLowerCase();
+    if (v.includes("dark")) return true;
+    if (v.includes("light")) return false;
+    return null;
+  }
+
+  function backgroundLooksDark(el) {
+    if (!el) return null;
+    const bg = getComputedStyle(el).backgroundColor;
+    const m = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    if (!m) return null;
+    const [, r, g, b] = m.map(Number);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    return luminance < 0.5;
+  }
+
+  function themeFromElement(el) {
+    if (!el) return null;
+    const attrTheme = parseTheme(el.getAttribute?.("data-app-theme"));
+    if (attrTheme != null) return attrTheme;
+    const dataTheme = parseTheme(el.getAttribute?.("data-theme"));
+    if (dataTheme != null) return dataTheme;
+    const classTheme = parseTheme(el.className);
+    if (classTheme != null) return classTheme;
+    const schemeTheme = parseTheme(getComputedStyle(el).colorScheme);
+    if (schemeTheme != null) return schemeTheme;
+    return null;
+  }
+
+  function isDark() {
+    const themedAncestor = hostEl.closest?.(themeSelector);
+    return themeFromElement(themedAncestor)
+      ?? themeFromElement(hostEl)
+      ?? themeFromElement(hostEl.parentElement)
+      ?? themeFromElement(document.body)
+      ?? themeFromElement(document.documentElement)
+      ?? backgroundLooksDark(hostEl.parentElement)
+      ?? backgroundLooksDark(document.body)
+      ?? media.matches;
+  }
+
+  function apply() {
+    const dark = isDark();
+    hostEl.classList.toggle("dark-theme", dark);
+    hostEl.style.colorScheme = dark ? "dark" : "light";
+  }
+
+  apply();
+
+  const obs = new MutationObserver(apply);
+  const observed = new Set();
+  function observe(el) {
+    if (!el || observed.has(el)) return;
+    obs.observe(el, { attributes: true, attributeFilter: ["data-app-theme", "data-theme", "class", "style"] });
+    observed.add(el);
+  }
+
+  observe(document.documentElement);
+  observe(document.body);
+  observe(hostEl.parentElement);
+  observe(hostEl.closest?.(themeSelector));
+
+  media.addEventListener("change", apply);
+
+  const cleanup = () => {
+    obs.disconnect();
+    media.removeEventListener("change", apply);
+    if (hostEl.__cleanupThemeSync === cleanup) delete hostEl.__cleanupThemeSync;
+  };
+  hostEl.__cleanupThemeSync = cleanup;
+  return cleanup;
+}
+
 function render({ model, el }) {
   const shadow = el.attachShadow ? el.attachShadow({ mode: "open" }) : el;
+  _syncTheme(el);
   const styleEl = document.createElement("style");
   styleEl.textContent = STYLES;
   shadow.appendChild(styleEl);
@@ -453,6 +534,7 @@ function render({ model, el }) {
   let activeTab = "clusters";
   let selectedIds = {};    // per-tab selected item id
   let loadedTabs = {};     // track which tabs have been loaded
+  let hasRendered = false;
 
   function fullRender() {
     // Header
@@ -472,9 +554,9 @@ function render({ model, el }) {
     if (err) html += '<div class="cb-error">' + esc(err) + "</div>";
 
     // Body
-    html += '<div class="cb-body">';
+    html += '<div class="cb-body' + (model.get("loading") && hasRendered ? ' op-loading-overlay' : '') + '">';
 
-    if (model.get("loading")) {
+    if (model.get("loading") && !hasRendered) {
       html += '<div class="cb-loading"><span class="spinner"></span> Loading\u2026</div>';
     } else {
       const tabDef = TABS.find(t => t.key === activeTab);
@@ -504,6 +586,7 @@ function render({ model, el }) {
 
     html += "</div>";
     root.innerHTML = html;
+    hasRendered = true;
     bindEvents();
   }
 
