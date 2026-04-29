@@ -54,10 +54,10 @@ const OPS_STYLES = `
   .op-badge-info { background: #dbeafe; color: #1e40af; }
   .op-badge-muted { background: #f3f4f6; color: #6b7280; }
   :host(.dark-theme) .op-badge-success { background: #064e3b; color: #6ee7b7; }
-    :host(.dark-theme) .op-badge-danger { background: #7f1d1d; color: #fca5a5; }
-    :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
-    :host(.dark-theme) .op-badge-info { background: #1e3a5f; color: #93c5fd; }
-    :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .op-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .op-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
   .op-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--op-border); margin-bottom: 12px; }
   .op-tab { padding: 6px 16px; cursor: pointer; font-size: 12px; font-weight: 500; border: none; background: none; color: var(--op-text-muted); border-bottom: 2px solid transparent; margin-bottom: -2px; font-family: var(--op-font); }
   .op-tab:hover { color: var(--op-text); }

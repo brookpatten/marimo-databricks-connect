@@ -117,10 +117,10 @@ const STYLES = `
   .cb-badge-info    { background: #dbeafe; color: #1e40af; }
   .cb-badge-muted   { background: #f3f4f6; color: #6b7280; }
   :host(.dark-theme) .cb-badge-success { background: #064e3b; color: #6ee7b7; }
-    :host(.dark-theme) .cb-badge-danger { background: #7f1d1d; color: #fca5a5; }
-    :host(.dark-theme) .cb-badge-warning { background: #78350f; color: #fcd34d; }
-    :host(.dark-theme) .cb-badge-info { background: #1e3a5f; color: #93c5fd; }
-    :host(.dark-theme) .cb-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .cb-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .cb-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .cb-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .cb-badge-muted { background: #374151; color: #9ca3af; }
 
   /* Detail panel */
   .cb-detail-panel {

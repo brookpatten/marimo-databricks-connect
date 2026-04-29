@@ -139,12 +139,12 @@ const STYLES = `
   .uc-badge-table   { background: #ede9fe; color: #5b21b6; }
   .uc-badge-view    { background: #fce7f3; color: #9d174d; }
   :host(.dark-theme) .uc-badge-success { background: #064e3b; color: #6ee7b7; }
-    :host(.dark-theme) .uc-badge-danger { background: #7f1d1d; color: #fca5a5; }
-    :host(.dark-theme) .uc-badge-warning { background: #78350f; color: #fcd34d; }
-    :host(.dark-theme) .uc-badge-info { background: #1e3a5f; color: #93c5fd; }
-    :host(.dark-theme) .uc-badge-muted { background: #374151; color: #9ca3af; }
-    :host(.dark-theme) .uc-badge-table { background: #4c1d95; color: #c4b5fd; }
-    :host(.dark-theme) .uc-badge-view { background: #831843; color: #f9a8d4; }
+  :host(.dark-theme) .uc-badge-danger { background: #7f1d1d; color: #fca5a5; }
+  :host(.dark-theme) .uc-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .uc-badge-info { background: #1e3a5f; color: #93c5fd; }
+  :host(.dark-theme) .uc-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .uc-badge-table { background: #4c1d95; color: #c4b5fd; }
+  :host(.dark-theme) .uc-badge-view { background: #831843; color: #f9a8d4; }
 
   /* Detail panel */
   .uc-detail-panel {

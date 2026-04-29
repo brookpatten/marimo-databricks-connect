@@ -43,9 +43,9 @@ const OPS_STYLES = `
   .op-badge-success { background: #d1fae5; color: #065f46; }
   .op-badge-warning { background: #fef3c7; color: #92400e; }
   :host(.dark-theme) .op-badge-info { background: #1e3a5f; color: #93c5fd; }
-    :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
-    :host(.dark-theme) .op-badge-success { background: #064e3b; color: #6ee7b7; }
-    :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
+  :host(.dark-theme) .op-badge-muted { background: #374151; color: #9ca3af; }
+  :host(.dark-theme) .op-badge-success { background: #064e3b; color: #6ee7b7; }
+  :host(.dark-theme) .op-badge-warning { background: #78350f; color: #fcd34d; }
   .op-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--op-border); margin-bottom: 12px; }
   .op-tab { padding: 6px 16px; cursor: pointer; font-size: 12px; font-weight: 500; border: none; background: none; color: var(--op-text-muted); border-bottom: 2px solid transparent; margin-bottom: -2px; font-family: var(--op-font); }
   .op-tab:hover { color: var(--op-text); }
