@@ -2024,3 +2024,300 @@ class TestPipelineWidget:
         result = json.loads(w.action_result)
         assert result["success"] is False
         assert "forbidden" in result["message"]
+
+
+# ===================================================================
+# GenieWidget tests
+# ===================================================================
+
+
+def _make_genie_space():
+    return SimpleNamespace(
+        space_id="space-abc",
+        title="Sales Genie",
+        description="Ask about sales",
+        warehouse_id="wh-1",
+        parent_path="/Workspace/Genie",
+    )
+
+
+def _make_text_attachment(content="Total sales were $1.2M last quarter."):
+    return SimpleNamespace(
+        attachment_id="att-text-1",
+        text=SimpleNamespace(content=content, purpose=None),
+        query=None,
+        suggested_questions=None,
+    )
+
+
+def _make_query_attachment(query="SELECT 1"):
+    return SimpleNamespace(
+        attachment_id="att-q-1",
+        text=None,
+        query=SimpleNamespace(
+            title="Sales by region",
+            description="Aggregates sales",
+            query=query,
+            statement_id="stmt-1",
+        ),
+        suggested_questions=None,
+    )
+
+
+def _make_suggested_attachment():
+    return SimpleNamespace(
+        attachment_id="att-s-1",
+        text=None,
+        query=None,
+        suggested_questions=SimpleNamespace(questions=["What about last year?", "Top 5 products?"]),
+    )
+
+
+def _make_genie_message(message_id="msg-1", conversation_id="conv-1", attachments=None, status="COMPLETED"):
+    return SimpleNamespace(
+        message_id=message_id,
+        id=message_id,
+        conversation_id=conversation_id,
+        content="What were sales?",
+        status=SimpleNamespace(value=status),
+        created_timestamp=1700000000000,
+        last_updated_timestamp=1700000010000,
+        user_id=42,
+        error=None,
+        attachments=attachments or [],
+    )
+
+
+def _mock_genie_ws():
+    ws = MagicMock()
+    ws.genie.get_space.return_value = _make_genie_space()
+    return ws
+
+
+class TestGenieWidget:
+    def test_init_loads_space(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        data = json.loads(w.space_data)
+        assert data["space_id"] == "space-abc"
+        assert data["title"] == "Sales Genie"
+        assert data["warehouse_id"] == "wh-1"
+        ws.genie.get_space.assert_called_once_with("space-abc")
+
+    def test_init_load_space_failure(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = MagicMock()
+        ws.genie.get_space.side_effect = RuntimeError("not found")
+        w = GenieWidget(space_id="space-x", workspace_client=ws)
+        assert "not found" in w.error_message
+
+    def test_ask_starts_conversation_when_none(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        msg = _make_genie_message(attachments=[_make_text_attachment(), _make_query_attachment()])
+        ws.genie.start_conversation_and_wait.return_value = msg
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        # call _ask synchronously to avoid races
+        w._ask("What were sales?")
+        assert w.conversation_id == "conv-1"
+        msgs = json.loads(w.messages)
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "What were sales?"
+        assert len(msgs[0]["attachments"]) == 2
+        assert msgs[0]["attachments"][0]["text"]["content"].startswith("Total sales")
+        assert msgs[0]["attachments"][1]["query"]["query"] == "SELECT 1"
+        ws.genie.start_conversation_and_wait.assert_called_once()
+        ws.genie.create_message_and_wait.assert_not_called()
+
+    def test_ask_continues_existing_conversation(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.create_message_and_wait.return_value = _make_genie_message(
+            message_id="msg-2",
+            conversation_id="conv-1",
+            attachments=[_make_text_attachment("ok")],
+        )
+        w = GenieWidget(space_id="space-abc", workspace_client=ws, conversation_id="conv-1")
+        # avoid loading conversation messages from mock
+        ws.genie.list_conversation_messages.return_value = SimpleNamespace(messages=[])
+        w._ask("follow up?")
+        ws.genie.create_message_and_wait.assert_called_once()
+        ws.genie.start_conversation_and_wait.assert_not_called()
+        msgs = json.loads(w.messages)
+        assert any(m.get("message_id") == "msg-2" for m in msgs)
+
+    def test_ask_failure_clears_pending(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.start_conversation_and_wait.side_effect = RuntimeError("boom")
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w._ask("hi")
+        assert "boom" in w.error_message
+        # No messages should be added on failure (the optimistic placeholder
+        # lives only in the JS frontend now).
+        assert json.loads(w.messages) == []
+        assert w.busy is False
+
+    def test_new_conversation_action_resets_state(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        w = GenieWidget(space_id="space-abc", workspace_client=ws, conversation_id="conv-1")
+        ws.genie.list_conversation_messages.return_value = SimpleNamespace(messages=[])
+        w.messages = json.dumps([{"message_id": "m1", "content": "x"}])
+        w.request = json.dumps({"action": "new_conversation"})
+        assert w.conversation_id == ""
+        assert json.loads(w.messages) == []
+
+    def test_list_conversations(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.list_conversations.return_value = SimpleNamespace(
+            conversations=[
+                SimpleNamespace(
+                    conversation_id="c1",
+                    id="c1",
+                    title="Q1",
+                    created_timestamp=1700000000000,
+                    last_updated_timestamp=1700000100000,
+                ),
+                SimpleNamespace(
+                    conversation_id="c2",
+                    id="c2",
+                    title="Q2",
+                    created_timestamp=1700001000000,
+                    last_updated_timestamp=1700001100000,
+                ),
+            ]
+        )
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "list_conversations"})
+        convs = json.loads(w.conversations)
+        assert len(convs) == 2
+        assert convs[0]["title"] == "Q1"
+
+    def test_select_conversation_loads_messages_oldest_first(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        # Newest first as the API returns
+        ws.genie.list_conversation_messages.return_value = SimpleNamespace(
+            messages=[
+                SimpleNamespace(
+                    message_id="m2",
+                    id="m2",
+                    conversation_id="c1",
+                    content="second",
+                    status=SimpleNamespace(value="COMPLETED"),
+                    created_timestamp=2000,
+                    last_updated_timestamp=2000,
+                    user_id=1,
+                    error=None,
+                    attachments=[],
+                ),
+                SimpleNamespace(
+                    message_id="m1",
+                    id="m1",
+                    conversation_id="c1",
+                    content="first",
+                    status=SimpleNamespace(value="COMPLETED"),
+                    created_timestamp=1000,
+                    last_updated_timestamp=1000,
+                    user_id=1,
+                    error=None,
+                    attachments=[],
+                ),
+            ]
+        )
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "select_conversation", "conversation_id": "c1"})
+        msgs = json.loads(w.messages)
+        assert [m["content"] for m in msgs] == ["first", "second"]
+        assert w.conversation_id == "c1"
+
+    def test_run_query_serializes_results(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.get_message_attachment_query_result.return_value = SimpleNamespace(
+            statement_response=SimpleNamespace(
+                statement_id="stmt-1",
+                status=SimpleNamespace(state=SimpleNamespace(value="SUCCEEDED"), error=None),
+                manifest=SimpleNamespace(
+                    truncated=False,
+                    total_row_count=2,
+                    schema=SimpleNamespace(
+                        columns=[
+                            SimpleNamespace(name="region", type_text="STRING", type_name=None),
+                            SimpleNamespace(name="total", type_text="DOUBLE", type_name=None),
+                        ]
+                    ),
+                ),
+                result=SimpleNamespace(data_array=[["west", "100.5"], ["east", "75.0"]]),
+            )
+        )
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w.conversation_id = "conv-1"
+        w._run_query("msg-1", "att-q-1")
+        results = json.loads(w.query_results)
+        assert "att-q-1" in results
+        r = results["att-q-1"]
+        assert r["state"] == "SUCCEEDED"
+        assert [c["name"] for c in r["columns"]] == ["region", "total"]
+        assert r["rows"] == [["west", "100.5"], ["east", "75.0"]]
+        assert r["row_count"] == 2
+
+    def test_run_query_falls_back_to_execute_when_get_fails(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.get_message_attachment_query_result.side_effect = RuntimeError("expired")
+        ws.genie.execute_message_attachment_query.return_value = SimpleNamespace(
+            statement_response=SimpleNamespace(
+                statement_id="stmt-2",
+                status=SimpleNamespace(state=SimpleNamespace(value="SUCCEEDED"), error=None),
+                manifest=SimpleNamespace(truncated=False, total_row_count=0, schema=SimpleNamespace(columns=[])),
+                result=SimpleNamespace(data_array=[]),
+            )
+        )
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w.conversation_id = "conv-1"
+        w._run_query("msg-1", "att-q-1")
+        ws.genie.execute_message_attachment_query.assert_called_once()
+        results = json.loads(w.query_results)
+        assert results["att-q-1"]["state"] == "SUCCEEDED"
+
+    def test_run_query_failure_marks_failed(self):
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        ws.genie.get_message_attachment_query_result.side_effect = RuntimeError("g_fail")
+        ws.genie.execute_message_attachment_query.side_effect = RuntimeError("e_fail")
+        w = GenieWidget(space_id="space-abc", workspace_client=ws)
+        w.conversation_id = "conv-1"
+        w._run_query("msg-1", "att-q-1")
+        results = json.loads(w.query_results)
+        assert results["att-q-1"]["state"] == "FAILED"
+        assert "e_fail" in results["att-q-1"]["error"]
+
+    def test_serializes_suggested_questions(self):
+        from marimo_databricks_connect._genie_widget import _serialize_attachment
+
+        att = _make_suggested_attachment()
+        out = _serialize_attachment(att)
+        assert out["suggested_questions"] == ["What about last year?", "Top 5 products?"]
+
+    def test_factory_function(self):
+        from marimo_databricks_connect import genie_widget
+        from marimo_databricks_connect._genie_widget import GenieWidget
+
+        ws = _mock_genie_ws()
+        w = genie_widget("space-abc", workspace_client=ws)
+        assert isinstance(w, GenieWidget)

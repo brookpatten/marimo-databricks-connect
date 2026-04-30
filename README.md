@@ -5,8 +5,9 @@ This package provides compatibility & widgets for marimo notebooks & databricks.
 - Connect to databricks using databricks-connect & spark (not sql warehouse)
 - Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
 - Execution of both python & sql cells
+- Autocomplete Catalog/Schema/Table/Column Names
 - Browsing of catalogs/schemas/tables/columns in the marimo data sources view
-- Browsing of external locations, volumes, and dbfs in the marimo storage browser
+- Browsing of external locations, volumes, dbfs, workspace in the marimo storage browser
 - Notebook widgets to monitor and control of specific instances of databricks capabilities (clusters, workflows, vector search, apps etc)
 - Widgets to browse & explore databricks capabilities (compute, workflows, unity catalog)
 
@@ -59,9 +60,9 @@ Then in any notebook in this folder:
 ```python
 import marimo as mo
 from marimo_databricks_connect import (
-    dbfs, dbutils, external_location, spark,
+    dbfs, dbutils, external_location, spark, workspace, 
     exclude_catalogs, include_catalogs, show_all_catalogs,
-    workflows_widget, compute_widget, unity_catalog_widget,
+    workflows_widget, compute_widget, unity_catalog_widget
 )
 ```
 
@@ -73,6 +74,7 @@ That single import gives you:
 - include/exclude_catalogs - Show/Hide catalogs in the datasource UI
 - `dbfs` — an fsspec filesystem rooted at `/Volumes` that powers the marimo
   **storage browser** via Unity Catalog (no direct ADLS access).
+- `workspace` - filesystem browser for the workspace
 - A registered `SparkConnectEngine` so marimo's **data sources** panel browses
   catalogs / schemas / tables, and SQL cells run on Spark when you pass
   `engine=spark`:
@@ -80,6 +82,20 @@ That single import gives you:
 
   ```python
   mo.sql("SELECT * FROM samples.nyctaxi.trips LIMIT 100", engine=spark)
+  ```
+- **SQL autocomplete** — the engine feeds marimo's in-cell SQL completion
+  with catalogs, schemas, tables, and columns. Discovery is done in bulk via
+  `<catalog>.information_schema` (one query per catalog instead of N
+  `SHOW`/`DESCRIBE` round trips) and cached in-process. Call `prefetch()` at
+  the top of a notebook to warm the cache eagerly so suggestions appear on
+  the first keystroke:
+
+  ```python
+  from marimo_databricks_connect import include_catalogs, prefetch, refresh_metadata
+
+  include_catalogs("main", "samples")  # narrow scope (also makes columns eager)
+  prefetch()                             # populate cache for everything visible
+  # refresh_metadata("main")            # drop cache after schema changes
   ```
 - **Streaming DataFrame support** — streaming DataFrames (from
   `spark.readStream`) are automatically rendered with their schema and a
@@ -188,6 +204,7 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 ![dbr app](./docs/app_widget.png)
 
 ### Cluster
+
 ![cluster](./docs/cluster_widget.png)
 
 ### Job
@@ -195,6 +212,20 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 
 ### Schema
 ![schema](./docs/schema_widget.png)
+
+
+### Genie
+
+Chat with a Databricks AI/BI Genie space — ask natural-language questions,
+get back text answers and generated SQL, run the queries inline, and follow
+suggested next questions.  Browse and resume past conversations.
+
+```python
+from marimo_databricks_connect import genie_widget
+widget = genie_widget("01ef...space_id...")
+widget
+```
+![genie](./docs/genie_widget.png)
 
 ### Serving Endpoint
 ![serving](./docs/serving_endpoint_widget.png)
@@ -210,6 +241,58 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 
 ### Warehouse
 ![warehouse](./docs/warehouse_widget.png)
+
+## Selector widgets (`mdc.ui.*`)
+
+First-class `mo.ui`-style selectors for every Databricks resource. Each one is
+a searchable dropdown whose `.value` traitlet plugs straight into marimo's
+reactive graph — picking a different option re-runs every cell that reads it,
+just like `mo.ui.dropdown`:
+
+```python
+import marimo as mo
+import marimo_databricks_connect as mdc
+
+catalog = mdc.ui.catalog()
+schema  = mdc.ui.schema(catalog=catalog)        # auto-refreshes when catalog changes
+table   = mdc.ui.table(schema=schema)
+column  = mdc.ui.column(table=table)
+
+mo.hstack([catalog, schema, table, column])
+```
+
+Then in any downstream cell:
+
+```python
+spark.table(table.value).select(column.value).limit(20)
+```
+
+Available selectors (all under `mdc.ui`):
+
+| Factory                          | `value` is...                              |
+| -------------------------------- | ------------------------------------------ |
+| `mdc.ui.catalog()`               | catalog name                               |
+| `mdc.ui.schema(catalog=...)`     | `catalog.schema`                           |
+| `mdc.ui.table(schema=...)`       | `catalog.schema.table`                     |
+| `mdc.ui.column(table=...)`       | column name                                |
+| `mdc.ui.secret_scope()`          | scope name                                 |
+| `mdc.ui.secret(scope=...)`       | secret key (with `{{secrets/...}}` ref in `selected_meta`) |
+| `mdc.ui.cluster()`               | cluster id                                 |
+| `mdc.ui.warehouse()`             | warehouse id                               |
+| `mdc.ui.workflow()`              | job id (str)                               |
+| `mdc.ui.pipeline()`              | DLT pipeline id                            |
+| `mdc.ui.app()`                   | app name                                   |
+| `mdc.ui.serving_endpoint()`      | endpoint name                              |
+| `mdc.ui.vector_search()`         | Vector Search endpoint name (alias: `vector_search_endpoint`) |
+| `mdc.ui.vector_index(endpoint=...)` | three-part index name                   |
+| `mdc.ui.genie_space()`           | Genie space id                             |
+| `mdc.ui.principal()`             | userName / applicationId / group displayName |
+
+Dependent selectors (`schema`, `table`, `column`, `secret`, `vector_index`)
+accept either a literal string parent or another selector — when given a
+selector they observe its `.value` and refetch automatically. All selectors
+also expose `.selected_meta` (parsed dict with extra metadata), `.options`
+(synced JSON list), a refresh button in the UI, and a `refresh()` method.
 
 ## Exploration Widgets
 
