@@ -1,13 +1,14 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling","hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [project]
 name = "marimo-databricks-connect"
 version = "0"
 description = ""
+dynamic = ["readme"]
 authors = [{name = "Brook Patten", email = "brook.patten@gmail.com"}]
-readme = "README.md"
+# readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "databricks-connect>=16.4,<19",
@@ -15,6 +16,17 @@ dependencies = [
     "fsspec>=2024.0",
     "anywidget>=0.10.0",
 ]
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+# replace relative links with absolute links
+pattern = '\[(.+?)\]\(((?!https?://)\S+?)\)'
+replacement = '[\1](https://github.com/brookpatten/marimo-databricks-connect/tree/main/\g<2>)'
 
 # [project.scripts]
 # new = "_"
