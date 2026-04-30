@@ -45,8 +45,10 @@ __all__ = [
     "workflows_widget",
     "compute_widget",
     "unity_catalog_widget",
+    "pipelines_widget",
     # Single-instance operational widgets
     "job_widget",
+    "pipeline_widget",
     "table_widget",
     "schema_widget",
     "cluster_widget",
@@ -57,6 +59,9 @@ __all__ = [
     "vector_search_endpoint_widget",
     "vector_index_widget",
     "app_widget",
+    "acl_widget",
+    "permissions_widget",
+    "principal_widget",
 ]
 
 _cache: dict[str, Any] = {}
@@ -580,6 +585,141 @@ def vector_index_widget(index_name: str, workspace_client: Any = None, refresh_s
         index_name=index_name,
         workspace_client=workspace_client,
         refresh_seconds=refresh_seconds,
+    )
+
+
+def pipelines_widget(workspace_client: Any = None, refresh_seconds: int = 60) -> Any:
+    """Create an interactive widget for browsing Databricks Lakeflow Declarative Pipelines (DLT).
+
+    Lists pipelines in the workspace with drill-down into spec, recent
+    updates, and the pipeline event log. For start/stop and full-refresh
+    actions on a specific pipeline, use :func:`pipeline_widget` instead.
+
+    Args:
+        workspace_client: An optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+        refresh_seconds: Auto-refresh interval for the pipeline list view
+            (default 60s). The browser includes a pause/resume toggle.
+
+    Returns:
+        A ``PipelinesWidget`` anywidget instance.
+
+    Example::
+
+        from marimo_databricks_connect import pipelines_widget
+        widget = pipelines_widget()
+        widget
+    """
+    from ._pipelines import PipelinesWidget
+
+    return PipelinesWidget(workspace_client=workspace_client, refresh_seconds=refresh_seconds)
+
+
+def pipeline_widget(
+    pipeline_id: str | None = None,
+    pipeline_name: str | None = None,
+    workspace_client: Any = None,
+    refresh_seconds: int = 30,
+) -> Any:
+    """Create an operational widget for a single Lakeflow Declarative Pipeline (DLT).
+
+    Displays pipeline status, configuration, recent updates, and event log.
+    Supports start, stop, full-refresh, and validate actions.  Auto-refreshes
+    periodically.
+
+    Args:
+        pipeline_id: The DLT pipeline ID (UUID).
+        pipeline_name: Alternative to ``pipeline_id`` — resolved by listing
+            pipelines whose name matches; the first exact match is used.
+        workspace_client: Optional ``WorkspaceClient``.
+        refresh_seconds: Auto-refresh interval (default 30s).
+
+    Example::
+
+        from marimo_databricks_connect import pipeline_widget
+        widget = pipeline_widget("abc-123-def-456")
+        widget
+
+        # Or by name:
+        widget = pipeline_widget(pipeline_name="bronze_etl")
+    """
+    from ._pipeline_widget import PipelineWidget
+
+    return PipelineWidget(
+        pipeline_id=pipeline_id,
+        pipeline_name=pipeline_name,
+        workspace_client=workspace_client,
+        refresh_seconds=refresh_seconds,
+    )
+
+
+def acl_widget(workspace_client: Any = None) -> Any:
+    """Create a cross-cutting permissions / ACL explorer widget.
+
+    Two tabs:
+
+    * **By Principal** — pick a user, group, or service principal and scan the
+      workspace + Unity Catalog for everything they have permissions on.
+      Optionally clone those grants to another principal, applied immediately
+      or emitted as a Python script.
+
+    * **By Securable** — pick any securable (cluster, job, warehouse, app,
+      secret scope, UC catalog/schema/table/volume/external-location/...) and
+      see every principal that has permissions on it.
+
+    Args:
+        workspace_client: Optional ``WorkspaceClient``.
+
+    Example::
+
+        from marimo_databricks_connect import acl_widget
+        widget = acl_widget()
+        widget
+    """
+    from ._acl_widget import AclWidget
+
+    return AclWidget(workspace_client=workspace_client)
+
+
+# Friendly alias
+permissions_widget = acl_widget
+
+
+def principal_widget(
+    principal: str,
+    principal_type: str | None = None,
+    workspace_client: Any = None,
+    auto_scan: bool = False,
+) -> Any:
+    """Create a widget for a single principal (user, group, or service principal).
+
+    Resolves the principal via SCIM (``users.list`` / ``service_principals.list``
+    / ``groups.list``) and shows their identity details (id, displayName,
+    active, entitlements, group memberships, roles, members for groups), plus
+    the same cross-cutting permission scan offered by :func:`acl_widget`.
+
+    Args:
+        principal: A user's ``userName`` (email), a service principal's
+            ``applicationId`` or ``displayName``, or a group's ``displayName``.
+        principal_type: Optional hint to skip resolution attempts. One of
+            ``"user"``, ``"service_principal"``, ``"group"``.
+        workspace_client: Optional ``WorkspaceClient``.
+        auto_scan: If ``True``, immediately run a scan over the default
+            (cheap) categories after resolving the principal.
+
+    Example::
+
+        from marimo_databricks_connect import principal_widget
+        widget = principal_widget("alice@example.com")
+        widget
+    """
+    from ._principal_widget import PrincipalWidget
+
+    return PrincipalWidget(
+        principal=principal,
+        principal_type=principal_type,
+        workspace_client=workspace_client,
+        auto_scan=auto_scan,
     )
 
 

@@ -85,6 +85,7 @@ class TableWidget(anywidget.AnyWidget):
 
     table_data = traitlets.Unicode("{}").tag(sync=True)
     sample_data = traitlets.Unicode("{}").tag(sync=True)
+    history_data = traitlets.Unicode("{}").tag(sync=True)
     lineage_data = traitlets.Unicode("{}").tag(sync=True)
     permissions_data = traitlets.Unicode("{}").tag(sync=True)
     loading = traitlets.Bool(False).tag(sync=True)
@@ -131,7 +132,15 @@ class TableWidget(anywidget.AnyWidget):
         if action == "refresh":
             self._load_table()
         elif action == "get_sample_data":
-            self._load_sample_data()
+            self._load_sample_data(
+                limit=req.get("limit"),
+                sort_column=req.get("sort_column"),
+                sort_order=req.get("sort_order"),
+                mode=req.get("mode"),
+                filter_expr=req.get("filter"),
+            )
+        elif action == "get_history":
+            self._load_history(limit=req.get("limit"))
         elif action == "get_permissions":
             self._load_permissions()
         elif action == "get_lineage":
@@ -152,7 +161,14 @@ class TableWidget(anywidget.AnyWidget):
         finally:
             self.loading = False
 
-    def _load_sample_data(self) -> None:
+    def _load_sample_data(
+        self,
+        limit: int | None = None,
+        sort_column: str | None = None,
+        sort_order: str | None = None,
+        mode: str | None = None,
+        filter_expr: str | None = None,
+    ) -> None:
         self.loading = True
         self.error_message = ""
         try:
@@ -163,13 +179,89 @@ class TableWidget(anywidget.AnyWidget):
                 return
             parts = self._full_name.split(".")
             quoted = ".".join(f"`{p}`" for p in parts)
-            df = spark.sql(f"SELECT * FROM {quoted} LIMIT 50")
+
+            try:
+                n = int(limit) if limit is not None else 50
+            except (TypeError, ValueError):
+                n = 50
+            n = max(1, min(n, 10000))
+
+            order = (sort_order or "asc").lower()
+            if order not in ("asc", "desc"):
+                order = "asc"
+            # "last N" is just the inverse sort order
+            if (mode or "first").lower() == "last":
+                order = "desc" if order == "asc" else "asc"
+
+            sql = f"SELECT * FROM {quoted}"
+            if filter_expr and filter_expr.strip():
+                sql += f" WHERE {filter_expr.strip()}"
+            if sort_column:
+                sql += f" ORDER BY `{sort_column}` {order.upper()}"
+            sql += f" LIMIT {n}"
+
+            df = spark.sql(sql)
             col_names = df.columns
             rows = [[str(v) if v is not None else None for v in row] for row in df.collect()]
-            self.sample_data = json.dumps({"table": self._full_name, "columns": col_names, "rows": rows})
+            # If "last N" with a sort column, reverse so user sees ascending again
+            if sort_column and (mode or "first").lower() == "last":
+                rows.reverse()
+            self.sample_data = json.dumps(
+                {
+                    "table": self._full_name,
+                    "columns": col_names,
+                    "rows": rows,
+                    "limit": n,
+                    "sort_column": sort_column,
+                    "sort_order": (sort_order or "asc").lower(),
+                    "mode": (mode or "first").lower(),
+                    "filter": filter_expr or "",
+                    "sql": sql,
+                }
+            )
         except Exception as exc:
             LOGGER.debug("Failed to get sample data for %s", self._full_name, exc_info=True)
             self.error_message = f"Failed to get sample data: {exc}"
+        finally:
+            self.loading = False
+
+    def _load_history(self, limit: int | None = None) -> None:
+        self.loading = True
+        self.error_message = ""
+        try:
+            spark = self._get_spark()
+            if spark is None:
+                self.error_message = "Spark session not available for table history."
+                self.loading = False
+                return
+            parts = self._full_name.split(".")
+            quoted = ".".join(f"`{p}`" for p in parts)
+            try:
+                n = int(limit) if limit is not None else 50
+            except (TypeError, ValueError):
+                n = 50
+            n = max(1, min(n, 1000))
+            df = spark.sql(f"DESCRIBE HISTORY {quoted} LIMIT {n}")
+            col_names = df.columns
+            rows = []
+            for row in df.collect():
+                out = []
+                for v in row:
+                    if v is None:
+                        out.append(None)
+                    elif isinstance(v, (str, int, float, bool)):
+                        out.append(v)
+                    elif isinstance(v, dict):
+                        out.append({str(k): (str(vv) if vv is not None else None) for k, vv in v.items()})
+                    elif isinstance(v, list):
+                        out.append([str(x) if x is not None else None for x in v])
+                    else:
+                        out.append(str(v))
+                rows.append(out)
+            self.history_data = json.dumps({"table": self._full_name, "columns": col_names, "rows": rows, "limit": n})
+        except Exception as exc:
+            LOGGER.debug("Failed to get history for %s", self._full_name, exc_info=True)
+            self.error_message = f"Failed to get history: {exc}"
         finally:
             self.loading = False
 
