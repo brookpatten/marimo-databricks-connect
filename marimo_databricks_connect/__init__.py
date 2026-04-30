@@ -35,6 +35,8 @@ __all__ = [
     "dbutils",
     "dbfs",
     "engine",
+    "prefetch",
+    "refresh_metadata",
     "external_location",
     "mount",
     "include_catalogs",
@@ -221,6 +223,35 @@ def catalog_filter() -> Any:
     from ._filter import _filter
 
     return _filter
+
+
+def prefetch(*catalogs: str) -> dict[str, int]:
+    """Eagerly populate the SQL metadata cache so completion lights up immediately.
+
+    Without this, marimo's data sources panel and SQL autocomplete only
+    discover catalogs / schemas / tables / columns lazily as you expand
+    nodes (or as the engine is asked for them), which can mean the first
+    completion in a fresh notebook hits a cold cache.
+
+    Calling ``prefetch()`` runs the bulk ``information_schema`` queries up
+    front and stashes the results in an in-process TTL cache shared with
+    the engine.  Pass explicit catalog names to scope the prefetch::
+
+        prefetch()                         # everything visible under your filter
+        prefetch("main", "samples")        # just these two
+
+    Returns a ``{catalog: table_count}`` summary.
+    """
+    eng = __getattr__("engine")
+    return eng.prefetch(*catalogs)
+
+
+def refresh_metadata(catalog: str | None = None) -> None:
+    """Drop cached SQL metadata so the next completion / panel expansion
+    re-fetches it.  Pass a catalog name to invalidate just one catalog,
+    or no argument to invalidate everything."""
+    eng = __getattr__("engine")
+    eng.refresh(catalog)
 
 
 def _register_with_marimo() -> None:

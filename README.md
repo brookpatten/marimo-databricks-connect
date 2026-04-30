@@ -5,6 +5,7 @@ This package provides compatibility & widgets for marimo notebooks & databricks.
 - Connect to databricks using databricks-connect & spark (not sql warehouse)
 - Authenticate/configure spark using the default databricks-connect process (env vars, .databrickscfg etc)
 - Execution of both python & sql cells
+- Autocomplete Catalog/Schema/Table/Column Names
 - Browsing of catalogs/schemas/tables/columns in the marimo data sources view
 - Browsing of external locations, volumes, and dbfs in the marimo storage browser
 - Notebook widgets to monitor and control of specific instances of databricks capabilities (clusters, workflows, vector search, apps etc)
@@ -71,6 +72,20 @@ That single import gives you:
 
   ```python
   mo.sql("SELECT * FROM samples.nyctaxi.trips LIMIT 100", engine=spark)
+  ```
+- **SQL autocomplete** — the engine feeds marimo's in-cell SQL completion
+  with catalogs, schemas, tables, and columns. Discovery is done in bulk via
+  `<catalog>.information_schema` (one query per catalog instead of N
+  `SHOW`/`DESCRIBE` round trips) and cached in-process. Call `prefetch()` at
+  the top of a notebook to warm the cache eagerly so suggestions appear on
+  the first keystroke:
+
+  ```python
+  from marimo_databricks_connect import include_catalogs, prefetch, refresh_metadata
+
+  include_catalogs("main", "samples")  # narrow scope (also makes columns eager)
+  prefetch()                             # populate cache for everything visible
+  # refresh_metadata("main")            # drop cache after schema changes
   ```
 - **Streaming DataFrame support** — streaming DataFrames (from
   `spark.readStream`) are automatically rendered with their schema and a
