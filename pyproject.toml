@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "marimo-databricks-connect"
 version = "0"
-description = ""
+description = "databricks-connect compatibility & widgets for Marimo Notebooks"
 dynamic = ["readme"]
 authors = [{name = "Brook Patten", email = "brook.patten@gmail.com"}]
 # readme = "README.md"
