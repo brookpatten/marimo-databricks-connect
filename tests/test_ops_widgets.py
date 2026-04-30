@@ -251,6 +251,132 @@ class TestTableWidget:
 
         assert isinstance(w, TableWidget)
 
+    def test_load_sample_data_with_options(self):
+        from marimo_databricks_connect._table_widget import TableWidget
+
+        ws = MagicMock()
+        ws.tables.get.return_value = _make_table()
+        w = TableWidget(full_name="main.bronze.events", workspace_client=ws)
+
+        # Mock spark session
+        mock_df = MagicMock()
+        mock_df.columns = ["id", "name"]
+        mock_df.collect.return_value = [(1, "a"), (2, "b")]
+        spark = MagicMock()
+        spark.sql.return_value = mock_df
+        w._spark = spark
+
+        w.request = json.dumps(
+            {
+                "action": "get_sample_data",
+                "limit": 10,
+                "mode": "first",
+                "sort_column": "id",
+                "sort_order": "desc",
+                "filter": "id > 0",
+            }
+        )
+        sql = spark.sql.call_args[0][0]
+        assert "FROM `main`.`bronze`.`events`" in sql
+        assert "WHERE id > 0" in sql
+        assert "ORDER BY `id` DESC" in sql
+        assert "LIMIT 10" in sql
+        sample = json.loads(w.sample_data)
+        assert sample["limit"] == 10
+        assert sample["sort_column"] == "id"
+        assert sample["mode"] == "first"
+        assert sample["filter"] == "id > 0"
+        assert len(sample["rows"]) == 2
+
+    def test_load_sample_data_last_n_inverts_order(self):
+        from marimo_databricks_connect._table_widget import TableWidget
+
+        ws = MagicMock()
+        ws.tables.get.return_value = _make_table()
+        w = TableWidget(full_name="main.bronze.events", workspace_client=ws)
+        mock_df = MagicMock()
+        mock_df.columns = ["id"]
+        mock_df.collect.return_value = [(3,), (2,), (1,)]
+        spark = MagicMock()
+        spark.sql.return_value = mock_df
+        w._spark = spark
+
+        w.request = json.dumps(
+            {
+                "action": "get_sample_data",
+                "limit": 5,
+                "mode": "last",
+                "sort_column": "id",
+                "sort_order": "asc",
+            }
+        )
+        sql = spark.sql.call_args[0][0]
+        # last + asc => fetch DESC then reverse client-side
+        assert "ORDER BY `id` DESC" in sql
+        sample = json.loads(w.sample_data)
+        assert sample["mode"] == "last"
+        # Rows reversed back to ascending for display
+        assert [r[0] for r in sample["rows"]] == ["1", "2", "3"]
+
+    def test_load_sample_data_defaults(self):
+        from marimo_databricks_connect._table_widget import TableWidget
+
+        ws = MagicMock()
+        ws.tables.get.return_value = _make_table()
+        w = TableWidget(full_name="main.bronze.events", workspace_client=ws)
+        mock_df = MagicMock()
+        mock_df.columns = ["id"]
+        mock_df.collect.return_value = []
+        spark = MagicMock()
+        spark.sql.return_value = mock_df
+        w._spark = spark
+
+        w.request = json.dumps({"action": "get_sample_data"})
+        sql = spark.sql.call_args[0][0]
+        assert "LIMIT 50" in sql
+        assert "ORDER BY" not in sql
+        assert "WHERE" not in sql
+
+    def test_load_history(self):
+        from marimo_databricks_connect._table_widget import TableWidget
+
+        ws = MagicMock()
+        ws.tables.get.return_value = _make_table()
+        w = TableWidget(full_name="main.bronze.events", workspace_client=ws)
+        mock_df = MagicMock()
+        mock_df.columns = ["version", "timestamp", "operation", "operationParameters"]
+        mock_df.collect.return_value = [
+            (5, "2024-01-01", "WRITE", {"mode": "Append"}),
+            (4, "2023-12-31", "OPTIMIZE", {}),
+        ]
+        spark = MagicMock()
+        spark.sql.return_value = mock_df
+        w._spark = spark
+
+        w.request = json.dumps({"action": "get_history", "limit": 25})
+        sql = spark.sql.call_args[0][0]
+        assert sql.startswith("DESCRIBE HISTORY `main`.`bronze`.`events`")
+        assert "LIMIT 25" in sql
+        history = json.loads(w.history_data)
+        assert history["limit"] == 25
+        assert history["columns"][0] == "version"
+        assert len(history["rows"]) == 2
+        # dict serialized as object
+        assert history["rows"][0][3] == {"mode": "Append"}
+        assert history["rows"][0][0] == 5
+
+    def test_load_history_no_spark(self):
+        from marimo_databricks_connect._table_widget import TableWidget
+
+        ws = MagicMock()
+        ws.tables.get.return_value = _make_table()
+        w = TableWidget(full_name="main.bronze.events", workspace_client=ws)
+        # Force spark unavailable
+        w._spark = None
+        w._get_spark = lambda: None
+        w.request = json.dumps({"action": "get_history"})
+        assert "Spark session not available" in w.error_message
+
 
 # ===================================================================
 # SchemaWidget tests
@@ -1393,3 +1519,508 @@ class TestAppWidget:
         from marimo_databricks_connect._app_widget import AppWidget
 
         assert isinstance(w, AppWidget)
+
+
+# ===================================================================
+# PipelineWidget tests
+# ===================================================================
+
+
+def _make_latest_update(update_id="upd-001", state="COMPLETED", creation_time=1700000000000):
+    return SimpleNamespace(
+        update_id=update_id,
+        state=SimpleNamespace(value=state),
+        creation_time=creation_time,
+    )
+
+
+def _make_full_update(update_id="upd-001", state="COMPLETED", full_refresh=False):
+    return SimpleNamespace(
+        update_id=update_id,
+        state=SimpleNamespace(value=state),
+        creation_time=1700000000000,
+        cause=SimpleNamespace(value="API_CALL"),
+        cluster_id="cluster-xyz",
+        full_refresh=full_refresh,
+        full_refresh_selection=[],
+        refresh_selection=[],
+        validate_only=False,
+    )
+
+
+def _make_pipeline_spec():
+    lib_nb = SimpleNamespace(
+        notebook=SimpleNamespace(path="/Users/me/etl"),
+        file=None,
+        glob=None,
+        jar=None,
+        whl=None,
+        maven=None,
+    )
+    return SimpleNamespace(
+        catalog="main",
+        schema="bronze",
+        target=None,
+        channel="CURRENT",
+        edition="ADVANCED",
+        continuous=False,
+        development=True,
+        photon=True,
+        serverless=True,
+        storage=None,
+        root_path=None,
+        budget_policy_id=None,
+        configuration={"spark.sql.shuffle.partitions": "200"},
+        tags={"team": "data"},
+        libraries=[lib_nb],
+        notifications=[],
+    )
+
+
+def _make_pipeline(state="IDLE", health="HEALTHY"):
+    return SimpleNamespace(
+        pipeline_id="pl-abc",
+        name="bronze_etl",
+        state=SimpleNamespace(value=state),
+        health=SimpleNamespace(value=health),
+        creator_user_name="user@test.com",
+        run_as_user_name="user@test.com",
+        cluster_id="cluster-xyz",
+        last_modified=1700000000000,
+        cause=None,
+        effective_publishing_mode=SimpleNamespace(value="DIRECT_PUBLISHING"),
+        latest_updates=[_make_latest_update()],
+        spec=_make_pipeline_spec(),
+    )
+
+
+def _make_pipeline_event(level="INFO", event_type="update_progress", message="started"):
+    return SimpleNamespace(
+        id="evt-1",
+        timestamp="2024-01-01T00:00:00Z",
+        level=SimpleNamespace(value=level),
+        event_type=event_type,
+        maturity_level=SimpleNamespace(value="STABLE"),
+        message=message,
+        origin=SimpleNamespace(update_id="upd-001", flow_name="bronze", dataset_name="raw_events"),
+        error=None,
+    )
+
+
+def _mock_pipeline_ws():
+    ws = MagicMock()
+    ws.pipelines.get.return_value = _make_pipeline()
+    ws.pipelines.list_updates.return_value = SimpleNamespace(updates=[_make_full_update()])
+    ws.pipelines.list_pipeline_events.return_value = [_make_pipeline_event()]
+    ws.pipelines.start_update.return_value = SimpleNamespace(update_id="upd-002")
+    ws.pipelines.stop.return_value = None
+    ws.pipelines.list_pipelines.return_value = []
+    return ws
+
+
+class TestPipelineWidget:
+    def test_init_loads_pipeline_and_updates(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        data = json.loads(w.pipeline_data)
+        assert data["pipeline_id"] == "pl-abc"
+        assert data["name"] == "bronze_etl"
+        assert data["state"] == "IDLE"
+        assert data["health"] == "HEALTHY"
+        assert data["spec"]["catalog"] == "main"
+        assert data["spec"]["schema"] == "bronze"
+        assert data["spec"]["serverless"] is True
+        assert data["spec"]["development"] is True
+        assert data["spec"]["libraries"] == [{"type": "notebook", "value": "/Users/me/etl"}]
+        assert data["spec"]["configuration"] == {"spark.sql.shuffle.partitions": "200"}
+        assert data["latest_updates"][0]["update_id"] == "upd-001"
+        updates = json.loads(w.updates_data)
+        assert len(updates) == 1
+        assert updates[0]["state"] == "COMPLETED"
+        assert w.loading is False
+
+    def test_init_by_name_resolves_id(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.pipelines.list_pipelines.return_value = [
+            SimpleNamespace(pipeline_id="pl-found", name="bronze_etl"),
+        ]
+        ws.pipelines.get.return_value = _make_pipeline()
+        w = PipelineWidget(pipeline_name="bronze_etl", workspace_client=ws)
+        ws.pipelines.list_pipelines.assert_called_once()
+        ws.pipelines.get.assert_called_with("pl-found")
+        assert w._pipeline_id == "pl-found"
+
+    def test_init_by_name_not_found(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.pipelines.list_pipelines.return_value = []
+        w = PipelineWidget(pipeline_name="missing", workspace_client=ws)
+        assert "not found" in w.error_message
+
+    def test_start_update_action(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "start_update"})
+        ws.pipelines.start_update.assert_called_with("pl-abc")
+        result = json.loads(w.action_result)
+        assert result["success"] is True
+        assert result["update_id"] == "upd-002"
+
+    def test_full_refresh_action(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "start_update", "full_refresh": True})
+        ws.pipelines.start_update.assert_called_with("pl-abc", full_refresh=True)
+        result = json.loads(w.action_result)
+        assert result["success"] is True
+        assert "full refresh" in result["message"].lower()
+
+    def test_validate_only_action(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "start_update", "validate_only": True})
+        ws.pipelines.start_update.assert_called_with("pl-abc", validate_only=True)
+        result = json.loads(w.action_result)
+        assert result["success"] is True
+        assert "valid" in result["message"].lower()
+
+    def test_selective_refresh(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps(
+            {
+                "action": "start_update",
+                "refresh_selection": ["bronze.events"],
+                "full_refresh_selection": ["bronze.dim"],
+            }
+        )
+        ws.pipelines.start_update.assert_called_with(
+            "pl-abc", full_refresh_selection=["bronze.dim"], refresh_selection=["bronze.events"]
+        )
+
+    def test_stop_action(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "stop"})
+        ws.pipelines.stop.assert_called_once_with("pl-abc")
+        result = json.loads(w.action_result)
+        assert result["success"] is True
+
+    def test_get_events_lazy_load(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        # events not loaded on init
+        assert w.events_data == "[]"
+        w.request = json.dumps({"action": "get_events"})
+        events = json.loads(w.events_data)
+        assert len(events) == 1
+        assert events[0]["level"] == "INFO"
+        assert events[0]["event_type"] == "update_progress"
+        assert events[0]["update_id"] == "upd-001"
+
+    def test_get_events_with_filter(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "get_events", "filter": "level='ERROR'"})
+        ws.pipelines.list_pipeline_events.assert_called_with(
+            "pl-abc", max_results=100, order_by=["timestamp desc"], filter="level='ERROR'"
+        )
+
+    def test_error_handling_on_get(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.pipelines.get.side_effect = RuntimeError("forbidden")
+        ws.pipelines.list_updates.side_effect = RuntimeError("forbidden")
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        assert "forbidden" in w.error_message
+
+    def test_action_failure_reports_error(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        ws.pipelines.start_update.side_effect = RuntimeError("permission denied")
+        w.request = json.dumps({"action": "start_update"})
+        result = json.loads(w.action_result)
+        assert result["success"] is False
+        assert "permission denied" in result["message"]
+
+    def test_factory_function(self):
+        from marimo_databricks_connect import pipeline_widget
+
+        ws = _mock_pipeline_ws()
+        w = pipeline_widget("pl-abc", workspace_client=ws)
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        assert isinstance(w, PipelineWidget)
+
+    # -- new: permissions, graph, settings -----------------------------
+
+    def _mk_perms(self):
+        from databricks.sdk.service import iam
+
+        return SimpleNamespace(
+            object_id="/pipelines/pl-abc",
+            object_type="pipelines",
+            access_control_list=[
+                SimpleNamespace(
+                    user_name="alice@test.com",
+                    group_name=None,
+                    service_principal_name=None,
+                    display_name="Alice",
+                    all_permissions=[
+                        SimpleNamespace(
+                            permission_level=iam.PermissionLevel("CAN_MANAGE"),
+                            inherited=False,
+                        )
+                    ],
+                ),
+                SimpleNamespace(
+                    user_name=None,
+                    group_name="data-eng",
+                    service_principal_name=None,
+                    display_name="data-eng",
+                    all_permissions=[
+                        SimpleNamespace(
+                            permission_level=iam.PermissionLevel("CAN_VIEW"),
+                            inherited=True,
+                        )
+                    ],
+                ),
+            ],
+        )
+
+    def test_get_permissions(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.pipelines.get_permissions.return_value = self._mk_perms()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "get_permissions"})
+        ws.pipelines.get_permissions.assert_called_once_with("pl-abc")
+        data = json.loads(w.permissions_data)
+        assert data["object_type"] == "pipelines"
+        assert len(data["acl"]) == 2
+        assert data["acl"][0]["principal"] == "alice@test.com"
+        assert data["acl"][0]["type"] == "user"
+        assert data["acl"][0]["permissions"][0]["level"] == "CAN_MANAGE"
+        assert data["acl"][1]["type"] == "group"
+        assert data["acl"][1]["permissions"][0]["inherited"] is True
+
+    def test_update_permissions(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.pipelines.get_permissions.return_value = self._mk_perms()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps(
+            {
+                "action": "update_permissions",
+                "acl": [
+                    {"user_name": "bob@test.com", "permission_level": "CAN_RUN"},
+                    {"group_name": "data-eng", "permission_level": "CAN_MANAGE"},
+                ],
+            }
+        )
+        result = json.loads(w.action_result)
+        assert result["success"] is True
+        ws.pipelines.set_permissions.assert_called_once()
+        kwargs = ws.pipelines.set_permissions.call_args.kwargs
+        acl = kwargs["access_control_list"]
+        assert len(acl) == 2
+        assert acl[0].user_name == "bob@test.com"
+        assert acl[0].permission_level.value == "CAN_RUN"
+        assert acl[1].group_name == "data-eng"
+        assert acl[1].permission_level.value == "CAN_MANAGE"
+
+    def test_get_graph(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.api_client.do.return_value = {
+            "events": [
+                {
+                    "details": {
+                        "flow_definition": {
+                            "output_dataset": "silver_orders",
+                            "flow_type": "MATERIALIZED_VIEW",
+                            "input_datasets": [
+                                {"name": "bronze_orders"},
+                                {"name": "lookup_customers"},
+                            ],
+                        }
+                    },
+                    "origin": {"flow_id": "f-2", "update_id": "upd-001"},
+                },
+                {
+                    "details": {
+                        "flow_definition": {
+                            "output_dataset": "bronze_orders",
+                            "flow_type": "STREAMING_TABLE",
+                            "input_datasets": [{"name": "external.raw_orders"}],
+                        }
+                    },
+                    "origin": {"flow_id": "f-1", "update_id": "upd-001"},
+                },
+                # Older duplicate of silver_orders should be ignored.
+                {
+                    "details": {
+                        "flow_definition": {
+                            "output_dataset": "silver_orders",
+                            "input_datasets": [{"name": "stale"}],
+                        }
+                    },
+                    "origin": {},
+                },
+            ]
+        }
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "get_graph"})
+
+        # API path & filter
+        ws.api_client.do.assert_called_with(
+            "GET",
+            "/api/2.0/pipelines/pl-abc/events",
+            query={
+                "max_results": 250,
+                "filter": "event_type='flow_definition'",
+                "order_by": "timestamp desc",
+            },
+        )
+        graph = json.loads(w.graph_data)
+        names = {n["name"] for n in graph["nodes"]}
+        assert names == {"silver_orders", "bronze_orders", "lookup_customers", "external.raw_orders"}
+        # External sources marked
+        ext = next(n for n in graph["nodes"] if n["name"] == "external.raw_orders")
+        assert ext["external"] is True
+        # Edges
+        edge_pairs = {(e["from"], e["to"]) for e in graph["edges"]}
+        assert ("bronze_orders", "silver_orders") in edge_pairs
+        assert ("lookup_customers", "silver_orders") in edge_pairs
+        assert ("external.raw_orders", "bronze_orders") in edge_pairs
+
+    def test_get_graph_for_specific_update(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        ws.api_client.do.return_value = {"events": []}
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "get_graph", "update_id": "upd-001"})
+        kwargs = ws.api_client.do.call_args.kwargs
+        assert "update_id='upd-001'" in kwargs["query"]["filter"]
+
+    def test_update_settings_notifications(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps(
+            {
+                "action": "update_settings",
+                "settings": {
+                    "notifications": [
+                        {
+                            "alerts": ["on-update-failure"],
+                            "email_recipients": ["oncall@test.com"],
+                        }
+                    ]
+                },
+            }
+        )
+        result = json.loads(w.action_result)
+        assert result["success"] is True, result
+        ws.pipelines.update.assert_called_once()
+        kwargs = ws.pipelines.update.call_args.kwargs
+        # The full spec must be re-sent (PUT-style).
+        assert kwargs["catalog"] == "main"
+        assert kwargs["schema"] == "bronze"
+        assert kwargs["serverless"] is True
+        # Notifications replaced.
+        notifs = kwargs["notifications"]
+        assert len(notifs) == 1
+        assert notifs[0].alerts == ["on-update-failure"]
+        assert notifs[0].email_recipients == ["oncall@test.com"]
+
+    def test_update_settings_clusters_and_config(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps(
+            {
+                "action": "update_settings",
+                "settings": {
+                    "configuration": {"spark.sql.shuffle.partitions": "400"},
+                    "clusters": [
+                        {
+                            "label": "default",
+                            "node_type_id": "i3.xlarge",
+                            "autoscale": {
+                                "min_workers": 1,
+                                "max_workers": 5,
+                                "mode": "ENHANCED",
+                            },
+                            "custom_tags": {"team": "data"},
+                        }
+                    ],
+                    "channel": "PREVIEW",
+                    "development": False,
+                },
+            }
+        )
+        result = json.loads(w.action_result)
+        assert result["success"] is True, result
+        kwargs = ws.pipelines.update.call_args.kwargs
+        assert kwargs["configuration"] == {"spark.sql.shuffle.partitions": "400"}
+        assert kwargs["channel"] == "PREVIEW"
+        assert kwargs["development"] is False
+        clusters = kwargs["clusters"]
+        assert len(clusters) == 1
+        assert clusters[0].label == "default"
+        assert clusters[0].node_type_id == "i3.xlarge"
+        assert clusters[0].autoscale.min_workers == 1
+        assert clusters[0].autoscale.max_workers == 5
+        assert clusters[0].autoscale.mode.value == "ENHANCED"
+        assert clusters[0].custom_tags == {"team": "data"}
+
+    def test_update_settings_no_changes(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        w.request = json.dumps({"action": "update_settings", "settings": {}})
+        result = json.loads(w.action_result)
+        assert result["success"] is False
+        assert "no changes" in result["message"].lower()
+        ws.pipelines.update.assert_not_called()
+
+    def test_update_settings_failure(self):
+        from marimo_databricks_connect._pipeline_widget import PipelineWidget
+
+        ws = _mock_pipeline_ws()
+        w = PipelineWidget(pipeline_id="pl-abc", workspace_client=ws)
+        ws.pipelines.update.side_effect = RuntimeError("forbidden")
+        w.request = json.dumps({"action": "update_settings", "settings": {"channel": "PREVIEW"}})
+        result = json.loads(w.action_result)
+        assert result["success"] is False
+        assert "forbidden" in result["message"]
