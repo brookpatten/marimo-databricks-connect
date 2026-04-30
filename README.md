@@ -179,6 +179,7 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 ![dbr app](./docs/app_widget.png)
 
 ### Cluster
+
 ![cluster](./docs/cluster_widget.png)
 
 ### Job
@@ -186,6 +187,20 @@ export MARIMO_DBC_SHOW_ALL_CATALOGS=1
 
 ### Schema
 ![schema](./docs/schema_widget.png)
+
+
+### Genie
+
+Chat with a Databricks AI/BI Genie space — ask natural-language questions,
+get back text answers and generated SQL, run the queries inline, and follow
+suggested next questions.  Browse and resume past conversations.
+
+```python
+from marimo_databricks_connect import genie_widget
+widget = genie_widget("01ef...space_id...")
+widget
+```
+![genie](./docs/genie_widget.png)
 
 ### Serving Endpoint
 ![serving](./docs/serving_endpoint_widget.png)

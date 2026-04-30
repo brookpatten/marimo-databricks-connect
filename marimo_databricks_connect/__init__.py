@@ -59,6 +59,7 @@ __all__ = [
     "vector_search_endpoint_widget",
     "vector_index_widget",
     "app_widget",
+    "genie_widget",
     "acl_widget",
     "permissions_widget",
     "principal_widget",
@@ -747,4 +748,36 @@ def app_widget(app_name: str, workspace_client: Any = None, refresh_seconds: int
         app_name=app_name,
         workspace_client=workspace_client,
         refresh_seconds=refresh_seconds,
+    )
+
+
+def genie_widget(
+    space_id: str,
+    workspace_client: Any = None,
+    conversation_id: str | None = None,
+) -> Any:
+    """Create a chat widget for a Databricks AI/BI Genie space.
+
+    Lets you ask questions in natural language and see Genie's text answers,
+    generated SQL, and tabular query results inline. Supports browsing past
+    conversations, starting a new one, clicking suggested follow-ups, and
+    re-running cached queries.
+
+    Args:
+        space_id: The Genie space ID (UUID).
+        workspace_client: Optional ``WorkspaceClient``.
+        conversation_id: Optionally resume an existing conversation.
+
+    Example::
+
+        from marimo_databricks_connect import genie_widget
+        widget = genie_widget("01ef...")
+        widget
+    """
+    from ._genie_widget import GenieWidget
+
+    return GenieWidget(
+        space_id=space_id,
+        workspace_client=workspace_client,
+        conversation_id=conversation_id,
     )
