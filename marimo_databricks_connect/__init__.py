@@ -270,7 +270,8 @@ def prefetch(*catalogs: str) -> dict[str, int]:
 def refresh_metadata(catalog: str | None = None) -> None:
     """Drop cached SQL metadata so the next completion / panel expansion
     re-fetches it.  Pass a catalog name to invalidate just one catalog,
-    or no argument to invalidate everything."""
+    or no argument to invalidate everything.
+    """
     eng = __getattr__("engine")
     eng.refresh(catalog)
 

@@ -433,7 +433,9 @@ class WarehouseSelector(_Selector):
                 {
                     "value": wid,
                     "label": getattr(w, "name", None) or wid,
-                    "sublabel": f"{enum_val(getattr(w, 'state', None)) or ''} · {getattr(w, 'cluster_size', '') or ''}",
+                    "sublabel": (
+                        f"{enum_val(getattr(w, 'state', None)) or ''} · {getattr(w, 'cluster_size', '') or ''}"
+                    ),
                 }
             )
         return out

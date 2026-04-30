@@ -91,7 +91,8 @@ def _serialize_conversation(conv: Any) -> dict:
 
 def _serialize_query_result(resp: Any) -> dict:
     """Pull a flat ``{columns, rows, truncated, row_count, error}`` dict
-    from a ``GenieGetMessageQueryResultResponse``."""
+    from a ``GenieGetMessageQueryResultResponse``.
+    """
     sr = getattr(resp, "statement_response", None)
     if sr is None:
         return {"columns": [], "rows": [], "row_count": 0}

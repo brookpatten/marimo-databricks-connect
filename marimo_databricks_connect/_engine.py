@@ -144,7 +144,8 @@ class SparkConnectEngine(SQLConnection[Any]):
     def _scope_is_narrow(self) -> bool:
         """``True`` if the user has narrowed catalog visibility (via
         ``include_catalogs(...)``), in which case it's cheap & desirable to
-        eagerly fetch column metadata for completion."""
+        eagerly fetch column metadata for completion.
+        """
         from ._filter import _filter
 
         return bool(_filter.includes) and not _filter.show_all
