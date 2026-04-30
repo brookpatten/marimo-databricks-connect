@@ -1,0 +1,131 @@
+"""OBO middleware + helpers for the app server.
+
+Databricks Apps inject identity headers into every request when the app is
+configured with **user authorization scopes**.  We extract them per request and
+bind them into a contextvar so that any code running in the same async task
+\u2014 including the marimo notebook session that's mounted further down the
+ASGI tree \u2014 can ask :mod:`marimo_databricks_connect._obo` for the active
+user's credentials.
+
+References:
+    https://learn.microsoft.com/en-us/azure/databricks/dev-tools/databricks-apps/auth
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
+
+from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from .. import _obo
+
+LOGGER = logging.getLogger(__name__)
+
+# Headers documented by Databricks Apps for OBO auth.
+HEADER_TOKEN = "x-forwarded-access-token"
+HEADER_USER = "x-forwarded-user"
+HEADER_EMAIL = "x-forwarded-email"
+HEADER_HOST = "x-forwarded-host"  # not always present \u2014 we fall back to env
+
+
+@dataclass(frozen=True)
+class UserIdentity:
+    """The end user the current request is acting on behalf of."""
+
+    user: Optional[str]
+    email: Optional[str]
+    token: Optional[str]
+    host: Optional[str]
+
+    @property
+    def display_name(self) -> str:
+        return self.email or self.user or "unknown"
+
+
+def _databricks_host() -> Optional[str]:
+    """Return the workspace URL the app is running in.
+
+    Databricks Apps set ``DATABRICKS_HOST`` in the runtime environment.  When
+    developing locally we fall back to the user's CLI config via the SDK.
+    """
+    host = os.environ.get("DATABRICKS_HOST")
+    if host:
+        return host if host.startswith("http") else f"https://{host}"
+    try:  # pragma: no cover - convenience for local dev
+        from databricks.sdk.config import Config
+
+        cfg = Config()
+        return cfg.host
+    except Exception:
+        return None
+
+
+def identity_from_request(request: Request) -> UserIdentity:
+    """Extract OBO identity from incoming request headers."""
+    h = request.headers
+    token = h.get(HEADER_TOKEN)
+    if not token:
+        # Local-dev fallback: use whatever the unified auth chain finds.  The
+        # contextvar stays unset so the package keeps its existing behaviour.
+        return UserIdentity(user=None, email=None, token=None, host=_databricks_host())
+    fwd_host = h.get(HEADER_HOST)
+    host = (f"https://{fwd_host}" if fwd_host and not fwd_host.startswith("http") else fwd_host) or _databricks_host()
+    return UserIdentity(
+        user=h.get(HEADER_USER),
+        email=h.get(HEADER_EMAIL),
+        token=token,
+        host=host,
+    )
+
+
+class OboMiddleware:
+    """ASGI middleware that pushes OBO credentials into a contextvar.
+
+    Applied at the *outer* ASGI layer so that every downstream handler \u2014
+    FastAPI routes *and* the dynamically-mounted marimo apps \u2014 can read
+    the active user's credentials.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        ident = identity_from_request(request)
+        if ident.token:
+            state = _obo.set_credentials(ident.host, ident.token)
+            scope.setdefault("state", {})
+            scope["state"]["user"] = ident
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                _obo.reset_credentials(state)
+        else:
+            scope.setdefault("state", {})
+            scope["state"]["user"] = ident
+            await self.app(scope, receive, send)
+
+
+def get_request_user(request: Request) -> UserIdentity:
+    """FastAPI dependency-style accessor for the current user."""
+    user = request.scope.get("state", {}).get("user")
+    if isinstance(user, UserIdentity):
+        return user
+    return identity_from_request(request)
+
+
+# Convenience for ``with_dynamic_directory(middleware=[obo_middleware_factory])``
+def obo_middleware_factory(app: ASGIApp) -> ASGIApp:
+    """Return :class:`OboMiddleware` \u2014 marimo's middleware factory shape."""
+    return OboMiddleware(app)
+
+
+# Re-export for callers that want a Callable signature for documentation.
+MiddlewareCallable = Callable[[ASGIApp], Awaitable[None]]

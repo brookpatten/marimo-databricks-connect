@@ -1,0 +1,5 @@
+# Runtime dependencies for the Databricks App.
+# Databricks Apps installs everything in this file into the app environment
+# before launching the `command` from app.yaml.
+
+marimo-databricks-connect[app]
