@@ -17,6 +17,16 @@ dependencies = [
     "anywidget>=0.10.0",
 ]
 
+[project.optional-dependencies]
+# Extras for running the Databricks App in `marimo_databricks_connect.app`.
+app = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+
+[project.scripts]
+mdc-app = "marimo_databricks_connect.app.server:main"
+
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
 
@@ -30,12 +40,14 @@ replacement = '[\1](https://github.com/brookpatten/marimo-databricks-connect/tre
 
 # [project.scripts]
 # new = "_"
+# (See [project.scripts] above for the real entry points.)
 
 [dependency-groups]
 dev = [
     "pytest>=8.2.2,<9",
     "pytest-cov>=5.0.0,<6",
-    "pre-commit>=3.7.1,<4"
+    "pre-commit>=3.7.1,<4",
+    "httpx>=0.28.1",
 ]
 
 # [[tool.uv.index]]
