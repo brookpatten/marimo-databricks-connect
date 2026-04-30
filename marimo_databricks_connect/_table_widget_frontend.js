@@ -167,12 +167,17 @@ function render({ model, el }) {
 
   let currentTab = "columns";
   let sampleLoaded = false;
+  let historyLoaded = false;
   let lineageLoaded = false;
   let permissionsLoaded = false;
   let hasRendered = false;
+  // Sample data controls (persist across re-renders)
+  let sampleCtrl = { limit: 50, mode: "first", sort_column: "", sort_order: "asc", filter: "" };
+  let historyCtrl = { limit: 50 };
 
   function getTable() { return JSON.parse(model.get("table_data") || "{}"); }
   function getSample() { return JSON.parse(model.get("sample_data") || "{}"); }
+  function getHistory() { return JSON.parse(model.get("history_data") || "{}"); }
   function getLineage() { return JSON.parse(model.get("lineage_data") || "{}"); }
   function getPermissions() { return JSON.parse(model.get("permissions_data") || "{}"); }
 
@@ -201,6 +206,7 @@ function render({ model, el }) {
       html += `<div class="op-tabs">`;
       html += `<button class="op-tab${currentTab==='columns'?' active':''}" data-tab="columns">Columns (${cols.length})</button>`;
       html += `<button class="op-tab${currentTab==='sample'?' active':''}" data-tab="sample">Sample Data</button>`;
+      html += `<button class="op-tab${currentTab==='history'?' active':''}" data-tab="history">History</button>`;
       html += `<button class="op-tab${currentTab==='lineage'?' active':''}" data-tab="lineage">Lineage</button>`;
       html += `<button class="op-tab${currentTab==='permissions'?' active':''}" data-tab="permissions">Permissions</button>`;
       html += `<button class="op-tab${currentTab==='info'?' active':''}" data-tab="info">Info</button>`;
@@ -224,6 +230,21 @@ function render({ model, el }) {
       // Sample tab
       html += `<div class="op-tab-content" data-tab="sample" style="${currentTab!=='sample'?'display:none':''}">`;
       const sample = getSample();
+      // Controls bar
+      const colOpts = ['<option value="">(no sort)</option>']
+        .concat((cols||[]).map(c => `<option value="${esc(c.name)}"${sampleCtrl.sort_column===c.name?' selected':''}>${esc(c.name)}</option>`))
+        .join('');
+      html += `<div class="op-sample-controls" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;padding:8px;background:var(--op-bg-alt);border:1px solid var(--op-border);border-radius:4px;">`;
+      html += `<label class="op-muted">Mode <select data-ctrl="mode"><option value="first"${sampleCtrl.mode==='first'?' selected':''}>First</option><option value="last"${sampleCtrl.mode==='last'?' selected':''}>Last</option></select></label>`;
+      html += `<label class="op-muted">Rows <input type="number" min="1" max="10000" data-ctrl="limit" value="${sampleCtrl.limit}" style="width:70px"/></label>`;
+      html += `<label class="op-muted">Sort by <select data-ctrl="sort_column">${colOpts}</select></label>`;
+      html += `<label class="op-muted">Order <select data-ctrl="sort_order"><option value="asc"${sampleCtrl.sort_order==='asc'?' selected':''}>ASC</option><option value="desc"${sampleCtrl.sort_order==='desc'?' selected':''}>DESC</option></select></label>`;
+      html += `<label class="op-muted" style="flex:1;min-width:200px;display:flex;gap:4px;align-items:center">Filter (WHERE) <input type="text" data-ctrl="filter" value="${esc(sampleCtrl.filter)}" placeholder="e.g. id > 100 AND status = 'OK'" style="flex:1;font-family:var(--op-font-mono)"/></label>`;
+      html += `<button class="op-btn op-btn-primary" data-action="load-sample">${sampleLoaded ? 'Reload' : 'Load Sample'}</button>`;
+      html += `</div>`;
+      if (sample.sql) {
+        html += `<div class="op-muted op-mono" style="font-size:11px;margin-bottom:6px;word-break:break-all;">${esc(sample.sql)}</div>`;
+      }
       if (sample.rows && sample.rows.length) {
         html += `<div style="overflow-x:auto"><table class="op-table op-sample-table"><thead><tr>`;
         for (const col of sample.columns) html += `<th>${esc(col)}</th>`;
@@ -235,9 +256,40 @@ function render({ model, el }) {
         }
         html += `</tbody></table></div>`;
       } else if (sampleLoaded) {
-        html += `<div class="op-empty">No sample data available.</div>`;
+        html += `<div class="op-empty">No rows returned.</div>`;
       } else {
-        html += `<div class="op-empty"><button class="op-btn op-btn-primary" data-action="load-sample">Load Sample Data (50 rows)</button></div>`;
+        html += `<div class="op-empty op-muted">Adjust options above and click "Load Sample".</div>`;
+      }
+      html += `</div>`;
+
+      // History tab (Delta)
+      html += `<div class="op-tab-content" data-tab="history" style="${currentTab!=='history'?'display:none':''}">`;
+      const history = getHistory();
+      html += `<div class="op-sample-controls" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;padding:8px;background:var(--op-bg-alt);border:1px solid var(--op-border);border-radius:4px;">`;
+      html += `<label class="op-muted">Limit <input type="number" min="1" max="1000" data-hctrl="limit" value="${historyCtrl.limit}" style="width:70px"/></label>`;
+      html += `<button class="op-btn op-btn-primary" data-action="load-history">${historyLoaded ? 'Reload' : 'Load History'}</button>`;
+      html += `<span class="op-muted" style="font-size:11px">DESCRIBE HISTORY (Delta tables only)</span>`;
+      html += `</div>`;
+      if (history.rows && history.rows.length) {
+        html += `<div style="overflow-x:auto"><table class="op-table op-sample-table"><thead><tr>`;
+        for (const col of history.columns) html += `<th>${esc(col)}</th>`;
+        html += `</tr></thead><tbody>`;
+        for (const row of history.rows) {
+          html += `<tr>`;
+          for (const val of row) {
+            let display;
+            if (val == null) display = '';
+            else if (typeof val === 'object') display = esc(JSON.stringify(val));
+            else display = esc(val);
+            html += `<td>${display}</td>`;
+          }
+          html += `</tr>`;
+        }
+        html += `</tbody></table></div>`;
+      } else if (historyLoaded) {
+        html += `<div class="op-empty">No history available (table may not be Delta).</div>`;
+      } else {
+        html += `<div class="op-empty op-muted">Click "Load History" to view Delta table history.</div>`;
       }
       html += `</div>`;
 
@@ -320,14 +372,45 @@ function render({ model, el }) {
     root.querySelectorAll(".op-tab").forEach(tab => {
       tab.addEventListener("click", () => { currentTab = tab.dataset.tab; fullRender(); });
     });
+    // Sync sample controls into sampleCtrl on change (without re-rendering)
+    root.querySelectorAll("[data-ctrl]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const k = inp.dataset.ctrl;
+        sampleCtrl[k] = k === "limit" ? Number(inp.value) || 50 : inp.value;
+      });
+      inp.addEventListener("input", () => {
+        const k = inp.dataset.ctrl;
+        sampleCtrl[k] = k === "limit" ? Number(inp.value) || 50 : inp.value;
+      });
+    });
+    root.querySelectorAll("[data-hctrl]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        historyCtrl[inp.dataset.hctrl] = Number(inp.value) || 50;
+      });
+    });
     root.querySelector("[data-action='refresh']")?.addEventListener("click", () => sendRequest({ action: "refresh" }));
-    root.querySelector("[data-action='load-sample']")?.addEventListener("click", () => { sampleLoaded = true; sendRequest({ action: "get_sample_data" }); });
+    root.querySelector("[data-action='load-sample']")?.addEventListener("click", () => {
+      sampleLoaded = true;
+      sendRequest({
+        action: "get_sample_data",
+        limit: sampleCtrl.limit,
+        mode: sampleCtrl.mode,
+        sort_column: sampleCtrl.sort_column || null,
+        sort_order: sampleCtrl.sort_order,
+        filter: sampleCtrl.filter,
+      });
+    });
+    root.querySelector("[data-action='load-history']")?.addEventListener("click", () => {
+      historyLoaded = true;
+      sendRequest({ action: "get_history", limit: historyCtrl.limit });
+    });
     root.querySelector("[data-action='load-lineage']")?.addEventListener("click", () => { lineageLoaded = true; sendRequest({ action: "get_lineage" }); });
     root.querySelector("[data-action='load-permissions']")?.addEventListener("click", () => { permissionsLoaded = true; sendRequest({ action: "get_permissions" }); });
   }
 
   model.on("change:table_data", fullRender);
   model.on("change:sample_data", fullRender);
+  model.on("change:history_data", fullRender);
   model.on("change:lineage_data", fullRender);
   model.on("change:permissions_data", fullRender);
   model.on("change:loading", fullRender);
