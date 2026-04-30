@@ -142,9 +142,12 @@ class SparkConnectEngine(SQLConnection[Any]):
     # -- "auto" resolution -----------------------------------------------
 
     def _scope_is_narrow(self) -> bool:
-        """``True`` if the user has narrowed catalog visibility (via
+        """``True`` if the user has narrowed catalog visibility.
+
+        If the user has narrowed catalog visibility (via
         ``include_catalogs(...)``), in which case it's cheap & desirable to
         eagerly fetch column metadata for completion.
+
         """
         from ._filter import _filter
 
@@ -377,7 +380,8 @@ class SparkConnectEngine(SQLConnection[Any]):
     def _catalog_metadata(
         self, catalog: str, *, force: bool = False
     ) -> dict[str, dict[str, list[DataTableColumn]]] | None:
-        """Return ``{schema: {table: [columns]}}`` for a catalog, or ``None``
+        """Return ``{schema: {table: [columns]}}`` for a catalog, or ``None``.
+
         if information_schema isn't usable (legacy ``hive_metastore``,
         permission-denied, ``samples`` demo catalog, etc.).
 
