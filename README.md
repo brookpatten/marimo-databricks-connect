@@ -43,6 +43,15 @@ Authenticate once on your machine:
 
 ```bash
 az login
+# or
+databricks configure
+```
+
+Start Marimo (or use vscode extension)
+```bash
+marimo edit mynotebook.py
+# or
+marimo new
 ```
 
 Then in any notebook in this folder:
