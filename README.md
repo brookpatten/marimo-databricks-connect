@@ -233,6 +233,58 @@ widget
 ### Warehouse
 ![warehouse](./docs/warehouse_widget.png)
 
+## Selector widgets (`mdc.ui.*`)
+
+First-class `mo.ui`-style selectors for every Databricks resource. Each one is
+a searchable dropdown whose `.value` traitlet plugs straight into marimo's
+reactive graph — picking a different option re-runs every cell that reads it,
+just like `mo.ui.dropdown`:
+
+```python
+import marimo as mo
+import marimo_databricks_connect as mdc
+
+catalog = mdc.ui.catalog()
+schema  = mdc.ui.schema(catalog=catalog)        # auto-refreshes when catalog changes
+table   = mdc.ui.table(schema=schema)
+column  = mdc.ui.column(table=table)
+
+mo.hstack([catalog, schema, table, column])
+```
+
+Then in any downstream cell:
+
+```python
+spark.table(table.value).select(column.value).limit(20)
+```
+
+Available selectors (all under `mdc.ui`):
+
+| Factory                          | `value` is...                              |
+| -------------------------------- | ------------------------------------------ |
+| `mdc.ui.catalog()`               | catalog name                               |
+| `mdc.ui.schema(catalog=...)`     | `catalog.schema`                           |
+| `mdc.ui.table(schema=...)`       | `catalog.schema.table`                     |
+| `mdc.ui.column(table=...)`       | column name                                |
+| `mdc.ui.secret_scope()`          | scope name                                 |
+| `mdc.ui.secret(scope=...)`       | secret key (with `{{secrets/...}}` ref in `selected_meta`) |
+| `mdc.ui.cluster()`               | cluster id                                 |
+| `mdc.ui.warehouse()`             | warehouse id                               |
+| `mdc.ui.workflow()`              | job id (str)                               |
+| `mdc.ui.pipeline()`              | DLT pipeline id                            |
+| `mdc.ui.app()`                   | app name                                   |
+| `mdc.ui.serving_endpoint()`      | endpoint name                              |
+| `mdc.ui.vector_search()`         | Vector Search endpoint name (alias: `vector_search_endpoint`) |
+| `mdc.ui.vector_index(endpoint=...)` | three-part index name                   |
+| `mdc.ui.genie_space()`           | Genie space id                             |
+| `mdc.ui.principal()`             | userName / applicationId / group displayName |
+
+Dependent selectors (`schema`, `table`, `column`, `secret`, `vector_index`)
+accept either a literal string parent or another selector — when given a
+selector they observe its `.value` and refetch automatically. All selectors
+also expose `.selected_meta` (parsed dict with extra metadata), `.options`
+(synced JSON list), a refresh button in the UI, and a `refresh()` method.
+
 ## Exploration Widgets
 
 The package ships two interactive widgets built with [anywidget](https://anywidget.dev/) for exploring your Databricks workspace directly inside marimo notebooks.

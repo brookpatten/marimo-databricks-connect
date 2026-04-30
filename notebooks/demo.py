@@ -7,7 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget, include_catalogs, prefetch, workspace_widget, workspace
+    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget, include_catalogs, prefetch, workspace_widget, workspace, ui, schema_widget
 
 
     return (
