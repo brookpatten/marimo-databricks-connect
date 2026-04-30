@@ -631,3 +631,267 @@ def test_engine_registered_with_marimo_on_import():
 
     importlib.reload(pkg)
     assert SUPPORTED_ENGINES.count(SparkConnectEngine) == 1
+
+
+# ---------- Bulk metadata discovery (information_schema) -------------------
+
+
+def _info_schema_query(catalog):
+    return (
+        f"SELECT table_schema, table_name, column_name, data_type, ordinal_position "
+        f"FROM `{catalog}`.information_schema.columns "
+        f"ORDER BY table_schema, table_name, ordinal_position"
+    )
+
+
+def _schemata_query(catalog):
+    return f"SELECT schema_name FROM `{catalog}`.information_schema.schemata"
+
+
+def _bulk_spark(catalog="main", *, columns_rows=None, schemata_rows=None, fail_columns=False):
+    """Build a fake spark with a populated information_schema."""
+    cols = ["table_schema", "table_name", "column_name", "data_type", "ordinal_position"]
+    responses = {
+        "SELECT current_catalog()": [([catalog], None)],
+    }
+    if not fail_columns:
+        responses[_info_schema_query(catalog)] = [(list(r), cols) for r in (columns_rows or [])]
+    if schemata_rows is not None:
+        responses[_schemata_query(catalog)] = [([s], None) for s in schemata_rows]
+
+    spark = MagicMock()
+
+    def fake_sql(q):
+        if q not in responses:
+            if fail_columns and q == _info_schema_query(catalog):
+                raise RuntimeError("info_schema unavailable")
+            # Default: empty result for unknown queries.
+            df = MagicMock()
+            df.collect.return_value = []
+            return df
+        df = MagicMock()
+        df.collect.return_value = [_fake_row(values, names) for (values, names) in responses[q]]
+        return df
+
+    spark.sql.side_effect = fake_sql
+    return spark
+
+
+def test_bulk_metadata_populates_schemas_tables_columns(clean_filter):
+    """A single information_schema.columns query feeds the whole catalog."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[
+            ("bronze", "events", "id", "BIGINT", 1),
+            ("bronze", "events", "ts", "TIMESTAMP", 2),
+            ("bronze", "users", "id", "BIGINT", 1),
+            ("bronze", "users", "email", "STRING", 2),
+            ("silver", "agg", "day", "DATE", 1),
+        ],
+    )
+    eng = SparkConnectEngine(spark)
+    dbs = eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+
+    assert [d.name for d in dbs] == ["main"]
+    schemas = {s.name: s for s in dbs[0].schemas}
+    assert set(schemas) == {"bronze", "silver"}
+    bronze_tables = {t.name: t for t in schemas["bronze"].tables}
+    assert set(bronze_tables) == {"events", "users"}
+    events_cols = bronze_tables["events"].columns
+    assert [c.name for c in events_cols] == ["id", "ts"]
+    assert [c.external_type for c in events_cols] == ["BIGINT", "TIMESTAMP"]
+
+
+def test_bulk_metadata_includes_empty_schemas(clean_filter):
+    """Schemas with no tables show up via the schemata fallback query."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[("bronze", "events", "id", "BIGINT", 1)],
+        schemata_rows=["bronze", "silver", "empty_schema"],
+    )
+    eng = SparkConnectEngine(spark)
+    dbs = eng.get_databases(include_schemas=True, include_tables=True, include_table_details=False)
+    schema_names = {s.name for s in dbs[0].schemas}
+    assert "empty_schema" in schema_names
+
+
+def test_bulk_metadata_falls_back_to_show_when_info_schema_fails(clean_filter):
+    """Catalogs without information_schema (e.g. ``samples``) use SHOW/DESCRIBE."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _fake_spark(
+        {
+            "SELECT current_catalog()": [(["samples"], None)],
+            "SHOW SCHEMAS IN `samples`": [(["nyctaxi"], None)],
+            "SHOW TABLES IN `samples`.`nyctaxi`": [
+                (["nyctaxi", "trips", False], ["database", "tableName", "isTemporary"]),
+            ],
+        }
+    )
+    # Make the info_schema columns query throw to simulate samples.
+    real_sql = spark.sql.side_effect
+
+    def sql_with_info_schema_failure(q):
+        if "information_schema.columns" in q:
+            raise RuntimeError("not found")
+        return real_sql(q)
+
+    spark.sql.side_effect = sql_with_info_schema_failure
+
+    eng = SparkConnectEngine(spark)
+    dbs = eng.get_databases(include_schemas=True, include_tables=True, include_table_details=False)
+    schemas = {s.name: s for s in dbs[0].schemas}
+    assert "nyctaxi" in schemas
+    assert [t.name for t in schemas["nyctaxi"].tables] == ["trips"]
+
+
+def test_metadata_cache_avoids_repeat_information_schema_calls(clean_filter):
+    """Repeated discovery calls hit the in-process TTL cache, not Spark."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[("bronze", "events", "id", "BIGINT", 1)],
+    )
+    eng = SparkConnectEngine(spark)
+    eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+    eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+    eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+
+    info_schema_calls = sum(1 for c in spark.sql.call_args_list if "information_schema.columns" in c.args[0])
+    assert info_schema_calls == 1
+
+
+def test_refresh_invalidates_cache(clean_filter):
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[("bronze", "events", "id", "BIGINT", 1)],
+    )
+    eng = SparkConnectEngine(spark)
+    eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+    eng.refresh("main")
+    eng.get_databases(include_schemas=True, include_tables=True, include_table_details=True)
+
+    info_schema_calls = sum(1 for c in spark.sql.call_args_list if "information_schema.columns" in c.args[0])
+    assert info_schema_calls == 2
+
+
+def test_prefetch_returns_table_count(clean_filter):
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[
+            ("bronze", "events", "id", "BIGINT", 1),
+            ("bronze", "users", "id", "BIGINT", 1),
+            ("silver", "agg", "day", "DATE", 1),
+        ],
+    )
+    eng = SparkConnectEngine(spark)
+    summary = eng.prefetch("main")
+    assert summary == {"main": 3}
+
+
+def test_get_table_details_uses_cached_columns(clean_filter):
+    """``get_table_details`` should serve from cache when available — no
+    extra DESCRIBE round-trip."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[
+            ("bronze", "events", "id", "BIGINT", 1),
+            ("bronze", "events", "ts", "TIMESTAMP", 2),
+        ],
+    )
+    eng = SparkConnectEngine(spark)
+    eng.prefetch("main")
+    pre_calls = len(spark.sql.call_args_list)
+    detail = eng.get_table_details(table_name="events", schema_name="bronze", database_name="main")
+    assert detail is not None
+    assert [c.name for c in detail.columns] == ["id", "ts"]
+    # No additional Spark queries should have happened.
+    assert len(spark.sql.call_args_list) == pre_calls
+
+
+def test_auto_resolves_schemas_and_tables_eagerly_columns_lazily(clean_filter):
+    """Default behavior: schemas+tables surface for completion; columns
+    lazy-load unless include_catalogs has narrowed scope."""
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[
+            ("bronze", "events", "id", "BIGINT", 1),
+            ("bronze", "events", "ts", "TIMESTAMP", 2),
+        ],
+    )
+    eng = SparkConnectEngine(spark)
+    # All three flags = "auto" mimics what marimo passes from the default config.
+    dbs = eng.get_databases(
+        include_schemas="auto",
+        include_tables="auto",
+        include_table_details="auto",
+    )
+    bronze = next(s for s in dbs[0].schemas if s.name == "bronze")
+    events = next(t for t in bronze.tables if t.name == "events")
+    # Schemas + tables present...
+    assert [t.name for t in bronze.tables] == ["events"]
+    # ...but columns deferred (no narrow include_catalogs scope set).
+    assert events.columns == []
+
+
+def test_auto_resolves_columns_eagerly_when_include_catalogs_narrows_scope(clean_filter):
+    from marimo_databricks_connect import include_catalogs
+    from marimo_databricks_connect._engine import SparkConnectEngine
+
+    include_catalogs("main")
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[("bronze", "events", "id", "BIGINT", 1)],
+    )
+    # _list_catalogs uses SHOW CATALOGS when includes is set; stub it.
+    base_sql = spark.sql.side_effect
+
+    def sql_with_show(q):
+        if q == "SHOW CATALOGS":
+            df = MagicMock()
+            df.collect.return_value = [_fake_row(["main"], None)]
+            return df
+        return base_sql(q)
+
+    spark.sql.side_effect = sql_with_show
+
+    eng = SparkConnectEngine(spark)
+    dbs = eng.get_databases(
+        include_schemas="auto",
+        include_tables="auto",
+        include_table_details="auto",
+    )
+    events = dbs[0].schemas[0].tables[0]
+    assert [c.name for c in events.columns] == ["id"]
+
+
+def test_prefetch_helper_at_package_level(clean_filter):
+    import marimo_databricks_connect as pkg
+
+    spark = _bulk_spark(
+        "main",
+        columns_rows=[("bronze", "events", "id", "BIGINT", 1)],
+    )
+    pkg._cache.clear()
+    pkg._cache["spark"] = spark
+    try:
+        # Also warm the engine singleton.
+        eng = pkg.engine  # noqa: F841
+        summary = pkg.prefetch("main")
+        assert summary == {"main": 1}
+        pkg.refresh_metadata("main")
+    finally:
+        pkg._cache.clear()

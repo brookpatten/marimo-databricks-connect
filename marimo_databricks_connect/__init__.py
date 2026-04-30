@@ -30,11 +30,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import ui  # noqa: F401  (mo.ui-style selector factories: mdc.ui.catalog(), ...)
+
 __all__ = [
+    "ui",
     "spark",
     "dbutils",
     "dbfs",
+    "workspace",
     "engine",
+    "workspace_widget",
+    "prefetch",
+    "refresh_metadata",
     "external_location",
     "mount",
     "include_catalogs",
@@ -59,6 +66,7 @@ __all__ = [
     "vector_search_endpoint_widget",
     "vector_index_widget",
     "app_widget",
+    "genie_widget",
     "acl_widget",
     "permissions_widget",
     "principal_widget",
@@ -88,6 +96,20 @@ def _build_dbfs(spark: Any, dbu: Any) -> Any:
     return DbutilsFileSystem(dbutils=dbu, spark=spark, root="/Volumes")
 
 
+def _build_workspace() -> Any:
+    """Build a fsspec filesystem rooted at the Databricks Workspace tree.
+
+    Picked up automatically by marimo's storage browser (which scans for
+    ``fsspec.AbstractFileSystem`` instances in the notebook globals) and
+    surfaces notebooks, files, folders, and Repos under ``/``.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    from ._workspace_fs import WorkspaceFileSystem
+
+    return WorkspaceFileSystem(workspace_client=WorkspaceClient(), root="/")
+
+
 def _build_engine(spark: Any) -> Any:
     from ._engine import SparkConnectEngine
 
@@ -104,6 +126,8 @@ def __getattr__(name: str) -> Any:
         value = _build_dbutils(__getattr__("spark"))
     elif name == "dbfs":
         value = _build_dbfs(__getattr__("spark"), __getattr__("dbutils"))
+    elif name == "workspace":
+        value = _build_workspace()
     elif name == "engine":
         value = _build_engine(__getattr__("spark"))
     else:
@@ -220,6 +244,35 @@ def catalog_filter() -> Any:
     from ._filter import _filter
 
     return _filter
+
+
+def prefetch(*catalogs: str) -> dict[str, int]:
+    """Eagerly populate the SQL metadata cache so completion lights up immediately.
+
+    Without this, marimo's data sources panel and SQL autocomplete only
+    discover catalogs / schemas / tables / columns lazily as you expand
+    nodes (or as the engine is asked for them), which can mean the first
+    completion in a fresh notebook hits a cold cache.
+
+    Calling ``prefetch()`` runs the bulk ``information_schema`` queries up
+    front and stashes the results in an in-process TTL cache shared with
+    the engine.  Pass explicit catalog names to scope the prefetch::
+
+        prefetch()                         # everything visible under your filter
+        prefetch("main", "samples")        # just these two
+
+    Returns a ``{catalog: table_count}`` summary.
+    """
+    eng = __getattr__("engine")
+    return eng.prefetch(*catalogs)
+
+
+def refresh_metadata(catalog: str | None = None) -> None:
+    """Drop cached SQL metadata so the next completion / panel expansion
+    re-fetches it.  Pass a catalog name to invalidate just one catalog,
+    or no argument to invalidate everything."""
+    eng = __getattr__("engine")
+    eng.refresh(catalog)
 
 
 def _register_with_marimo() -> None:
@@ -747,4 +800,64 @@ def app_widget(app_name: str, workspace_client: Any = None, refresh_seconds: int
         app_name=app_name,
         workspace_client=workspace_client,
         refresh_seconds=refresh_seconds,
+    )
+
+
+def workspace_widget(
+    root: str = "/",
+    workspace_client: Any = None,
+) -> Any:
+    """Create an interactive widget for browsing the Databricks Workspace tree.
+
+    Lets you navigate notebooks, files, folders, and Repos under any starting
+    path, inspect per-object metadata, view permissions, and preview the
+    source of a notebook or file.
+
+    Args:
+        root: Starting workspace path (default ``"/"``).  Examples:
+            ``"/Users/me@example.com"``, ``"/Workspace/Shared"``,
+            ``"/Repos"``.
+        workspace_client: Optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+
+    Example::
+
+        from marimo_databricks_connect import workspace_widget
+        widget = workspace_widget(root="/Users/alice@example.com")
+        widget
+    """
+    from ._workspace_widget import WorkspaceWidget
+
+    return WorkspaceWidget(root=root, workspace_client=workspace_client)
+
+
+def genie_widget(
+    space_id: str,
+    workspace_client: Any = None,
+    conversation_id: str | None = None,
+) -> Any:
+    """Create a chat widget for a Databricks AI/BI Genie space.
+
+    Lets you ask questions in natural language and see Genie's text answers,
+    generated SQL, and tabular query results inline. Supports browsing past
+    conversations, starting a new one, clicking suggested follow-ups, and
+    re-running cached queries.
+
+    Args:
+        space_id: The Genie space ID (UUID).
+        workspace_client: Optional ``WorkspaceClient``.
+        conversation_id: Optionally resume an existing conversation.
+
+    Example::
+
+        from marimo_databricks_connect import genie_widget
+        widget = genie_widget("01ef...")
+        widget
+    """
+    from ._genie_widget import GenieWidget
+
+    return GenieWidget(
+        space_id=space_id,
+        workspace_client=workspace_client,
+        conversation_id=conversation_id,
     )
