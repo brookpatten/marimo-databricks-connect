@@ -7,7 +7,7 @@ This package provides compatibility & widgets for marimo notebooks & databricks.
 - Execution of both python & sql cells
 - Autocomplete Catalog/Schema/Table/Column Names
 - Browsing of catalogs/schemas/tables/columns in the marimo data sources view
-- Browsing of external locations, volumes, and dbfs in the marimo storage browser
+- Browsing of external locations, volumes, dbfs, workspace in the marimo storage browser
 - Notebook widgets to monitor and control of specific instances of databricks capabilities (clusters, workflows, vector search, apps etc)
 - Widgets to browse & explore databricks capabilities (compute, workflows, unity catalog)
 
@@ -51,9 +51,9 @@ Then in any notebook in this folder:
 ```python
 import marimo as mo
 from marimo_databricks_connect import (
-    dbfs, dbutils, external_location, spark,
+    dbfs, dbutils, external_location, spark, workspace, 
     exclude_catalogs, include_catalogs, show_all_catalogs,
-    workflows_widget, compute_widget, unity_catalog_widget,
+    workflows_widget, compute_widget, unity_catalog_widget
 )
 ```
 
@@ -65,6 +65,7 @@ That single import gives you:
 - include/exclude_catalogs - Show/Hide catalogs in the datasource UI
 - `dbfs` — an fsspec filesystem rooted at `/Volumes` that powers the marimo
   **storage browser** via Unity Catalog (no direct ADLS access).
+- `workspace` - filesystem browser for the workspace
 - A registered `SparkConnectEngine` so marimo's **data sources** panel browses
   catalogs / schemas / tables, and SQL cells run on Spark when you pass
   `engine=spark`:

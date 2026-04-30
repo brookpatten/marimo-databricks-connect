@@ -7,7 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget
+    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget, include_catalogs, prefetch, workspace_widget, workspace
 
 
     return (
@@ -15,11 +15,14 @@ def _():
         external_location,
         external_location_widget,
         genie_widget,
+        include_catalogs,
         mo,
+        prefetch,
         principal_widget,
         secret_scope_widget,
         spark,
         table_widget,
+        workspace_widget,
     )
 
 
@@ -30,23 +33,9 @@ def _(acl_widget):
 
 
 @app.cell
-def _():
-    from marimo_databricks_connect import include_catalogs, prefetch                                   
+def _(include_catalogs, prefetch):
     include_catalogs("samples")                                                              
     prefetch()
-    return (include_catalogs,)
-
-
-@app.cell(hide_code=True)
-def _(mo, spark):
-    _df = mo.sql(
-        f"""
-        select
-            r.
-        from samples.bakehouse.media_customer_reviews r
-        """,
-        engine=spark
-    )
     return
 
 
@@ -59,6 +48,12 @@ def _(genie_widget):
 @app.cell
 def _(principal_widget):
     principal_widget("foo@bar.com")
+    return
+
+
+@app.cell
+def _(workspace_widget):
+    workspace_widget()
     return
 
 

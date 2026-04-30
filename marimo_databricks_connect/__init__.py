@@ -34,7 +34,9 @@ __all__ = [
     "spark",
     "dbutils",
     "dbfs",
+    "workspace",
     "engine",
+    "workspace_widget",
     "prefetch",
     "refresh_metadata",
     "external_location",
@@ -91,6 +93,20 @@ def _build_dbfs(spark: Any, dbu: Any) -> Any:
     return DbutilsFileSystem(dbutils=dbu, spark=spark, root="/Volumes")
 
 
+def _build_workspace() -> Any:
+    """Build a fsspec filesystem rooted at the Databricks Workspace tree.
+
+    Picked up automatically by marimo's storage browser (which scans for
+    ``fsspec.AbstractFileSystem`` instances in the notebook globals) and
+    surfaces notebooks, files, folders, and Repos under ``/``.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    from ._workspace_fs import WorkspaceFileSystem
+
+    return WorkspaceFileSystem(workspace_client=WorkspaceClient(), root="/")
+
+
 def _build_engine(spark: Any) -> Any:
     from ._engine import SparkConnectEngine
 
@@ -107,6 +123,8 @@ def __getattr__(name: str) -> Any:
         value = _build_dbutils(__getattr__("spark"))
     elif name == "dbfs":
         value = _build_dbfs(__getattr__("spark"), __getattr__("dbutils"))
+    elif name == "workspace":
+        value = _build_workspace()
     elif name == "engine":
         value = _build_engine(__getattr__("spark"))
     else:
@@ -780,6 +798,34 @@ def app_widget(app_name: str, workspace_client: Any = None, refresh_seconds: int
         workspace_client=workspace_client,
         refresh_seconds=refresh_seconds,
     )
+
+
+def workspace_widget(
+    root: str = "/",
+    workspace_client: Any = None,
+) -> Any:
+    """Create an interactive widget for browsing the Databricks Workspace tree.
+
+    Lets you navigate notebooks, files, folders, and Repos under any starting
+    path, inspect per-object metadata, view permissions, and preview the
+    source of a notebook or file.
+
+    Args:
+        root: Starting workspace path (default ``"/"``).  Examples:
+            ``"/Users/me@example.com"``, ``"/Workspace/Shared"``,
+            ``"/Repos"``.
+        workspace_client: Optional ``databricks.sdk.WorkspaceClient``.
+            If not provided, one is created using the default auth chain.
+
+    Example::
+
+        from marimo_databricks_connect import workspace_widget
+        widget = workspace_widget(root="/Users/alice@example.com")
+        widget
+    """
+    from ._workspace_widget import WorkspaceWidget
+
+    return WorkspaceWidget(root=root, workspace_client=workspace_client)
 
 
 def genie_widget(
