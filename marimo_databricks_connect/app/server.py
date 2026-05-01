@@ -115,11 +115,18 @@ def _default_new_path(user: UserIdentity) -> str:
     return f"/Users/{who}/marimo/untitled-{stamp}.py"
 
 
-_SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+_SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 def _slug_for(path: str) -> str:
-    """Stable filesystem-safe id for a workspace path."""
+    """Stable filesystem-safe id for a workspace path.
+
+    The slug becomes the URL segment under ``/m/<slug>`` and the cache file
+    name (``<slug>.py``). It MUST NOT contain a ``.`` — marimo's
+    ``DynamicDirectoryMiddleware`` skips its ``<slug>.py`` lookup when the
+    URL segment already has a suffix (``Path(slug).suffix``), which would
+    cause every notebook open to return 404.
+    """
     s = _SLUG_RE.sub("_", path.strip("/")).strip("_")
     return s or "notebook"
 
