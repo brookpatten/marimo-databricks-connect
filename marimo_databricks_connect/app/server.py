@@ -55,7 +55,12 @@ def _build_workspace_client(user: UserIdentity):
     from databricks.sdk import WorkspaceClient
 
     if user.token:
-        return WorkspaceClient(host=user.host, token=user.token)
+        # Force PAT auth so the SDK ignores DATABRICKS_CLIENT_ID /
+        # DATABRICKS_CLIENT_SECRET env vars that the Databricks Apps runtime
+        # injects for the app's service principal -- otherwise the unified
+        # auth validator sees both PAT and OAuth configured and refuses to
+        # pick one.
+        return WorkspaceClient(host=user.host, token=user.token, auth_type="pat")
     # Local dev: fall back to unified auth chain.
     return WorkspaceClient()
 
