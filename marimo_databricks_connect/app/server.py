@@ -17,6 +17,7 @@ notebook code read from there to act on behalf of the user.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -30,7 +31,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from .. import _obo
 from .._workspace_fs import _is_dir_object, _object_type
 from .auth import OboMiddleware, UserIdentity, get_request_user, obo_middleware_factory
-from .templates import render_error, render_listing, render_page
+from .templates import (
+    render_drafts_section,
+    render_error,
+    render_listing,
+    render_page,
+    render_starter_notebook,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +98,23 @@ def _list_workspace(user: UserIdentity, path: str) -> list[dict]:
 
 # ---- notebook export ------------------------------------------------------
 
+
+def _default_new_path(user: UserIdentity) -> str:
+    """Suggested workspace path for a brand-new notebook.
+
+    ``/Users/<email>/marimo/untitled-<UTC-stamp>.py`` when we know the user;
+    otherwise an empty string (the form leaves the workspace target blank,
+    meaning local-cache only).
+    """
+    from datetime import datetime, timezone
+
+    who = user.email or user.user
+    if not who:
+        return ""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"/Users/{who}/marimo/untitled-{stamp}.py"
+
+
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
@@ -100,23 +124,141 @@ def _slug_for(path: str) -> str:
     return s or "notebook"
 
 
+# ---- per-slug metadata sidecar -------------------------------------------
+#
+# Every cached notebook gets a ``<slug>.meta.json`` sibling that records
+# where it came from / where it should be saved back to. We deliberately
+# avoid a single shared index file so concurrent writes from different
+# request workers don't need a lock.
+
+_META_SUFFIX = ".meta.json"
+
+
+def _meta_path(slug: str) -> Path:
+    return NOTEBOOK_CACHE / f"{slug}{_META_SUFFIX}"
+
+
+def _cache_path(slug: str) -> Path:
+    return NOTEBOOK_CACHE / f"{slug}.py"
+
+
+def _load_meta(slug: str) -> dict:
+    p = _meta_path(slug)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        LOGGER.warning("Discarding unreadable metadata for slug %r", slug)
+        return {}
+
+
+def _save_meta(slug: str, meta: dict) -> None:
+    _meta_path(slug).write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _list_drafts() -> list[dict]:
+    """Return cached notebooks (newest first) with save state for the index page."""
+    out: list[dict] = []
+    for p in NOTEBOOK_CACHE.glob("*.py"):
+        slug = p.stem
+        meta = _load_meta(slug)
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        uploaded = float(meta.get("last_uploaded_mtime") or 0.0)
+        out.append(
+            {
+                "slug": slug,
+                "workspace_path": meta.get("workspace_path"),
+                "mtime": mtime,
+                "last_uploaded_mtime": uploaded,
+                "dirty": mtime > uploaded + 0.5,  # 0.5s slack for fs timestamp jitter
+            }
+        )
+    out.sort(key=lambda d: d["mtime"], reverse=True)
+    return out
+
+
+def _import_to_workspace(user: UserIdentity, ws_path: str, source: bytes) -> None:
+    """Upload ``source`` to ``ws_path`` as a Python notebook (overwrite).
+
+    We import as ``format=SOURCE`` + ``language=PYTHON`` so the file shows up
+    as a Databricks notebook (round-trips perfectly through ``workspace.export``
+    even though the Databricks notebook UI will render the marimo source as a
+    single cell). Parent directories are created on demand.
+    """
+    import base64
+
+    from databricks.sdk.service.workspace import ImportFormat, Language
+
+    ws = _build_workspace_client(user)
+    parent = ws_path.rsplit("/", 1)[0]
+    if parent and parent != "":
+        try:
+            ws.workspace.mkdirs(parent)
+        except Exception:  # noqa: BLE001 -- mkdirs is idempotent; ignore errors
+            LOGGER.debug("mkdirs(%r) failed (likely already exists)", parent, exc_info=True)
+    ws.workspace.import_(
+        path=ws_path,
+        content=base64.b64encode(source).decode("ascii"),
+        format=ImportFormat.SOURCE,
+        language=Language.PYTHON,
+        overwrite=True,
+    )
+
+
+def _save_slug_to_workspace(user: UserIdentity, slug: str) -> str:
+    """Push the cached notebook at ``slug`` back to its tracked workspace path.
+
+    Returns the workspace path written. Raises ``HTTPException`` on usage errors.
+    """
+    cache = _cache_path(slug)
+    if not cache.exists():
+        raise HTTPException(404, f"No cached notebook for slug {slug!r}")
+    meta = _load_meta(slug)
+    ws_path = meta.get("workspace_path")
+    if not ws_path:
+        raise HTTPException(
+            400,
+            f"Notebook {slug!r} has no workspace target. Use 'Save as' to choose one.",
+        )
+    source = cache.read_bytes()
+    _import_to_workspace(user, ws_path, source)
+    meta["last_uploaded_mtime"] = cache.stat().st_mtime
+    _save_meta(slug, meta)
+    return ws_path
+
+
 def _export_notebook(user: UserIdentity, ws_path: str) -> Path:
     """Download ``ws_path`` from the workspace into NOTEBOOK_CACHE.
 
     Always re-exports on each open so notebook edits in the workspace are
-    picked up.  (Save-back from marimo to the workspace is intentionally out
-    of scope for this initial cut.)
+    picked up. Records the workspace origin in a sidecar so subsequent
+    Save buttons know where to push edits back to.
     """
     import base64
 
+    from databricks.sdk.service.workspace import ExportFormat
+
     ws = _build_workspace_client(user)
-    resp = ws.workspace.export(path=ws_path, format="SOURCE")
+    resp = ws.workspace.export(path=ws_path, format=ExportFormat.SOURCE)
     content_b64 = getattr(resp, "content", None)
     if content_b64 is None:
         raise HTTPException(500, f"Workspace export returned no content for {ws_path!r}")
     raw = base64.b64decode(content_b64)
-    target = NOTEBOOK_CACHE / f"{_slug_for(ws_path)}.py"
+    slug = _slug_for(ws_path)
+    target = _cache_path(slug)
     target.write_bytes(raw)
+    _save_meta(
+        slug,
+        {
+            "workspace_path": ws_path,
+            "last_uploaded_mtime": target.stat().st_mtime,
+            "origin": "workspace",
+        },
+    )
     return target
 
 
@@ -162,10 +304,11 @@ def build_app() -> FastAPI:
         user = get_request_user(request)
         try:
             entries = _list_workspace(user, path)
-            body = render_listing(entries, path)
+            listing = render_listing(entries, path, default_new_path=_default_new_path(user))
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Failed to list workspace path %r", path)
-            body = render_error(f"Failed to list {path!r}: {exc}")
+            listing = render_error(f"Failed to list {path!r}: {exc}")
+        body = render_drafts_section(_list_drafts()) + listing
         return HTMLResponse(
             render_page(
                 title=f"Workspace: {path}",
@@ -173,6 +316,82 @@ def build_app() -> FastAPI:
                 body=body,
             )
         )
+
+    @app.post("/new")
+    async def new_notebook(request: Request) -> RedirectResponse:
+        """Create a fresh starter notebook in NOTEBOOK_CACHE and open it.
+
+        If the form supplies a ``workspace_path`` we also import the starter
+        into the user's workspace immediately, so a subsequent Save just
+        overwrites that path. Without one, the notebook lives only in the
+        local app cache (and the Save button will require a path).
+        """
+        from datetime import datetime, timezone
+
+        user = get_request_user(request)
+        form = await request.form()
+        ws_path = (form.get("workspace_path") or "").strip() or None
+        if ws_path is not None and not ws_path.startswith("/"):
+            raise HTTPException(400, "`workspace_path` must be an absolute workspace path (start with /)")
+
+        if ws_path:
+            # Reuse the workspace path's slug so re-opening from the index
+            # listing maps to the same cached file.
+            slug = _slug_for(ws_path)
+        else:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            whom = _slug_for(user.email or user.user or "anon") or "anon"
+            slug = f"untitled-{whom}-{stamp}"
+
+        target = _cache_path(slug)
+        try:
+            target.write_text(render_starter_notebook(), encoding="utf-8")
+        except OSError as exc:
+            LOGGER.exception("Failed to write starter notebook to %s", target)
+            raise HTTPException(500, f"Could not create starter notebook: {exc}") from exc
+
+        meta: dict = {"origin": "new"}
+        if ws_path:
+            try:
+                _import_to_workspace(user, ws_path, target.read_bytes())
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Failed to import new notebook to workspace at %r", ws_path)
+                raise HTTPException(500, f"Could not save new notebook to {ws_path!r}: {exc}") from exc
+            meta["workspace_path"] = ws_path
+            meta["last_uploaded_mtime"] = target.stat().st_mtime
+        _save_meta(slug, meta)
+        return RedirectResponse(url=f"{MARIMO_MOUNT}/{slug}", status_code=303)
+
+    @app.post("/save")
+    async def save_notebook(request: Request) -> RedirectResponse:
+        """Push a cached notebook back to its tracked workspace path.
+
+        Form fields:
+            slug (required): cache slug as shown in the Drafts section.
+            workspace_path (optional): when supplied, retargets the notebook
+                ("Save as") and updates the sidecar metadata.
+            return_to (optional): URL to redirect to (defaults to /).
+        """
+        user = get_request_user(request)
+        form = await request.form()
+        slug = (form.get("slug") or "").strip()
+        if not slug:
+            raise HTTPException(400, "`slug` is required")
+        new_target = (form.get("workspace_path") or "").strip()
+        if new_target:
+            if not new_target.startswith("/"):
+                raise HTTPException(400, "`workspace_path` must be absolute")
+            meta = _load_meta(slug)
+            meta["workspace_path"] = new_target
+            _save_meta(slug, meta)
+        try:
+            _save_slug_to_workspace(user, slug)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Failed to save slug %r to workspace", slug)
+            raise HTTPException(500, f"Could not save notebook {slug!r}: {exc}") from exc
+        return RedirectResponse(url=form.get("return_to") or "/", status_code=303)
 
     @app.get("/edit")
     async def edit(request: Request, path: str) -> RedirectResponse:
