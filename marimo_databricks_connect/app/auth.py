@@ -29,7 +29,12 @@ LOGGER = logging.getLogger(__name__)
 HEADER_TOKEN = "x-forwarded-access-token"
 HEADER_USER = "x-forwarded-user"
 HEADER_EMAIL = "x-forwarded-email"
-HEADER_HOST = "x-forwarded-host"  # not always present \u2014 we fall back to env
+# Note: ``X-Forwarded-Host`` is intentionally *not* used to derive the
+# workspace API host. In Databricks Apps that header carries the public app
+# URL (e.g. ``app-xxx.azure.databricksapps.com``), which is **not** a
+# Databricks REST API endpoint -- pointing the SDK at it causes every call
+# to hang and eventually time out. The workspace URL is provided by the
+# ``DATABRICKS_HOST`` env var that the Apps runtime injects.
 
 
 @dataclass(frozen=True)
@@ -77,8 +82,9 @@ def identity_from_request(request: Request) -> UserIdentity:
         # Local-dev fallback: use whatever the unified auth chain finds.  The
         # contextvar stays unset so the package keeps its existing behaviour.
         return UserIdentity(user=None, email=None, token=None, host=_databricks_host())
-    fwd_host = h.get(HEADER_HOST)
-    host = (f"https://{fwd_host}" if fwd_host and not fwd_host.startswith("http") else fwd_host) or _databricks_host()
+    # Always use the workspace URL from the app runtime env; never the
+    # request's Host/X-Forwarded-Host (those are the app's public URL).
+    host = _databricks_host()
     return UserIdentity(
         user=h.get(HEADER_USER),
         email=h.get(HEADER_EMAIL),
