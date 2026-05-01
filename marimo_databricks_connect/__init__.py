@@ -30,7 +30,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import ui  # noqa: F401  (mo.ui-style selector factories: mdc.ui.catalog(), ...)
+from . import (
+    _obo,  # noqa: F401  (binds submodule so __getattr__ doesn't recurse)
+    ui,  # noqa: F401  (mo.ui-style selector factories: mdc.ui.catalog(), ...)
+)
 
 __all__ = [
     "ui",
@@ -72,16 +75,38 @@ __all__ = [
     "principal_widget",
 ]
 
-_cache: dict[str, Any] = {}
+_cache: dict[Any, Any] = {}
+
+
+def _cache_key(name: str) -> Any:
+    """Cache key that partitions singletons by the active OBO user token.
+
+    Without OBO the key is just ``name`` (the historical shape, so external
+    code that pokes at ``_cache["spark"] = ...`` keeps working).  Inside a
+    Databricks App request scope, the key becomes ``(name, token)`` so each
+    user gets their own ``WorkspaceClient`` / ``DatabricksSession``.
+    """
+    _, token = _obo.get_credentials()
+    if token is None:
+        return name
+    return (name, token)
+    _, token = _obo.get_credentials()
+    return (name, token)
 
 
 def _build_spark() -> Any:
     from databricks.connect import DatabricksSession
 
-    # Host + OAuth credentials are inferred from the Databricks unified auth chain
-    # (env vars, ~/.databrickscfg, az login → ARM token). Serverless = all-purpose
-    # serverless compute, no SQL warehouse.
-    return DatabricksSession.builder.serverless().getOrCreate()
+    host, token = _obo.get_credentials()
+    builder = DatabricksSession.builder.serverless()
+    if token:
+        # On-behalf-of-user: forward the caller's OAuth token from the app.
+        if host:
+            builder = builder.host(host)
+        builder = builder.token(token)
+    # Otherwise fall back to the unified auth chain (env vars,
+    # ~/.databrickscfg, az login → ARM token, app service principal, ...).
+    return builder.getOrCreate()
 
 
 def _build_dbutils(spark: Any) -> Any:
@@ -103,11 +128,19 @@ def _build_workspace() -> Any:
     ``fsspec.AbstractFileSystem`` instances in the notebook globals) and
     surfaces notebooks, files, folders, and Repos under ``/``.
     """
-    from databricks.sdk import WorkspaceClient
-
     from ._workspace_fs import WorkspaceFileSystem
 
-    return WorkspaceFileSystem(workspace_client=WorkspaceClient(), root="/")
+    return WorkspaceFileSystem(workspace_client=_build_workspace_client(), root="/")
+
+
+def _build_workspace_client() -> Any:
+    """Build a ``WorkspaceClient``, honouring an OBO user token if present."""
+    from databricks.sdk import WorkspaceClient
+
+    host, token = _obo.get_credentials()
+    if token:
+        return WorkspaceClient(host=host, token=token)
+    return WorkspaceClient()
 
 
 def _build_engine(spark: Any) -> Any:
@@ -117,9 +150,14 @@ def _build_engine(spark: Any) -> Any:
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily build singletons on first attribute access."""
-    if name in _cache:
-        return _cache[name]
+    """Lazily build singletons on first attribute access.
+
+    Singletons are cached per active OBO user (when running inside the
+    Databricks App), so each user gets their own Spark/Workspace clients.
+    """
+    key = _cache_key(name)
+    if key in _cache:
+        return _cache[key]
     if name == "spark":
         value = _build_spark()
     elif name == "dbutils":
@@ -132,7 +170,7 @@ def __getattr__(name: str) -> Any:
         value = _build_engine(__getattr__("spark"))
     else:
         raise AttributeError(f"module 'marimo_databricks_connect' has no attribute {name!r}")
-    _cache[name] = value
+    _cache[key] = value
     return value
 
 
