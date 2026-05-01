@@ -43,6 +43,11 @@ class UserIdentity:
 
     @property
     def display_name(self) -> str:
+        """Return a display name for the user.
+
+        Returns:
+            str: The display name, preferring email, then username, then "unknown".
+        """
         return self.email or self.user or "unknown"
 
 
@@ -91,9 +96,21 @@ class OboMiddleware:
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """Initialize the OBO middleware.
+
+        Args:
+            app (ASGIApp): The ASGI application to wrap.
+        """
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Handle an incoming ASGI request, injecting OBO credentials into the context.
+
+        Args:
+            scope (Scope): The ASGI scope for the request.
+            receive (Receive): The ASGI receive callable.
+            send (Send): The ASGI send callable.
+        """
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
