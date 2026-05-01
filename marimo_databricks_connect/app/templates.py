@@ -28,6 +28,32 @@ _PAGE = """<!doctype html>
     .empty {{ color: #888; font-style: italic; }}
     .err {{ background: #fee; border: 1px solid #c33; padding: 1rem;
             border-radius: 4px; color: #900; }}
+    .toolbar {{ margin: 1rem 0; }}
+    .toolbar .hint {{ color: #666; font-size: 0.8rem; margin-top: 0.3rem; }}
+    .path-input {{ width: 22rem; padding: 0.4rem 0.5rem; font-family: inherit;
+                   font-size: 0.85rem; border: 1px solid #ccc; border-radius: 3px;
+                   margin-right: 0.4rem; }}
+    .btn {{ display: inline-block; padding: 0.45rem 0.9rem; border-radius: 4px;
+            background: #06c; color: white; text-decoration: none;
+            font-size: 0.9rem; border: none; cursor: pointer; }}
+    .btn.secondary {{ background: #eef2f6; color: #06c; border: 1px solid #cbd5e1; }}
+    .btn:hover {{ background: #048; }}
+    .btn.secondary:hover {{ background: #dde6ef; }}
+    .btn[disabled] {{ background: #ccc; cursor: not-allowed; }}
+    form.inline {{ display: inline; }}
+    .drafts {{ margin: 1.5rem 0 1rem; padding: 1rem; background: #fafbfc;
+               border: 1px solid #e1e4e8; border-radius: 4px; }}
+    .drafts h2 {{ margin: 0 0 0.5rem; font-size: 1rem; }}
+    table.drafts-table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    table.drafts-table td {{ padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee;
+                             vertical-align: middle; }}
+    table.drafts-table tr:last-child td {{ border-bottom: none; }}
+    .draft-path {{ color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                   font-size: 0.85rem; }}
+    .pill {{ display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.45rem;
+             border-radius: 10px; }}
+    .pill.dirty {{ background: #fff3bf; color: #7c5800; border: 1px solid #f5d76e; }}
+    .pill.clean {{ background: #e6ffed; color: #196c2e; border: 1px solid #b6e8c4; }}
   </style>
 </head>
 <body>
@@ -71,12 +97,14 @@ def render_breadcrumbs(path: str) -> str:
     return '<div class="crumbs">' + " / ".join(crumbs) + "</div>"
 
 
-def render_listing(entries: Iterable[dict], current_path: str) -> str:
+def render_listing(entries: Iterable[dict], current_path: str, *, default_new_path: str = "") -> str:
     """Render a directory listing.
 
     Args:
         entries (Iterable[dict]): List of entry items to render.
         current_path (str): The current directory path.
+        default_new_path (str): Pre-filled value for the "New notebook"
+            workspace-path input. Empty string means local-cache only.
 
     Returns:
         str: HTML listing of directory contents.
@@ -107,7 +135,19 @@ def render_listing(entries: Iterable[dict], current_path: str) -> str:
         body = '<p class="empty">No items here.</p>'
     else:
         body = '<ul class="entries">' + "".join(items) + "</ul>"
-    return render_breadcrumbs(current_path) + body
+    default = html.escape(default_new_path)
+    toolbar = (
+        '<div class="toolbar">'
+        '<form class="inline" method="post" action="/new">'
+        '<input class="path-input" type="text" name="workspace_path" '
+        f'value="{default}" placeholder="/Users/you@example.com/marimo/new.py (optional)">'
+        '<button class="btn" type="submit">+ New notebook</button>'
+        "</form>"
+        '<div class="hint">Leave the path blank to keep the new notebook in '
+        "this app\u2019s local cache only.</div>"
+        "</div>"
+    )
+    return render_breadcrumbs(current_path) + toolbar + body
 
 
 def render_error(message: str) -> str:
@@ -120,3 +160,305 @@ def render_error(message: str) -> str:
         str: HTML error message.
     """
     return f'<div class="err">{html.escape(message)}</div>'
+
+
+def _format_age(seconds: float) -> str:
+    """Human-friendly relative timestamp (“3m ago”, “2h ago”, “just now”)."""
+    if seconds < 5:
+        return "just now"
+    if seconds < 60:
+        return f"{int(seconds)}s ago"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return f"{int(seconds // 86400)}d ago"
+
+
+def render_drafts_section(drafts: Iterable[dict]) -> str:
+    """Render the “Drafts” (cached notebook) panel for the index page.
+
+    Each draft dict carries: ``slug``, ``workspace_path`` (or None), ``mtime``,
+    ``last_uploaded_mtime``, ``dirty``. Rendered as a small table with Open
+    and Save buttons (Save is a POST form so it survives page refresh).
+    """
+    import time
+
+    drafts = list(drafts)
+    if not drafts:
+        return ""
+    now = time.time()
+    rows: list[str] = []
+    for d in drafts:
+        slug = html.escape(d["slug"])
+        ws_path = d.get("workspace_path") or ""
+        ws_disp = html.escape(ws_path) if ws_path else '<span class="empty">(local only)</span>'
+        age = _format_age(max(0.0, now - d["mtime"]))
+        if d["dirty"]:
+            status = '<span class="pill dirty">unsaved</span>'
+        elif ws_path:
+            status = '<span class="pill clean">saved</span>'
+        else:
+            status = '<span class="pill dirty">local only</span>'
+        # Save form: ``slug`` plus an inline ``workspace_path`` input that
+        # doubles as Save-As when the user edits the path before clicking.
+        save_form = (
+            '<form class="inline" method="post" action="/save">'
+            f'<input type="hidden" name="slug" value="{slug}">'
+            '<input type="hidden" name="return_to" value="/">'
+            '<input class="path-input" type="text" name="workspace_path" '
+            f'value="{html.escape(ws_path)}" placeholder="/Users/...">'
+            '<button class="btn secondary" type="submit">Save</button>'
+            "</form>"
+        )
+        open_btn = f'<a class="btn secondary" href="/m/{slug}">Open</a>'
+        rows.append(
+            f"<tr><td>{open_btn}</td>"
+            f'<td><div class="draft-path">{ws_disp}</div>'
+            f'<div style="color:#888;font-size:0.75rem;margin-top:0.15rem">slug: {slug} · edited {age}</div></td>'
+            f"<td>{status}</td>"
+            f"<td>{save_form}</td></tr>"
+        )
+    return (
+        '<div class="drafts">'
+        "<h2>Drafts (this app session)</h2>"
+        '<table class="drafts-table">' + "".join(rows) + "</table>"
+        "</div>"
+    )
+
+
+# ---- Starter notebook -----------------------------------------------------
+#
+# Source for the notebook created by the "+ New notebook" button. Must be a
+# valid ``marimo`` script (the dynamic-directory mount loads it as an app).
+# Keep cells short, well-commented, and side-effect-free so the notebook is
+# safe to open against any workspace.
+
+STARTER_NOTEBOOK = '''import marimo
+
+__generated_with = "0.23.3"
+app = marimo.App(width="medium")
+
+
+@app.cell(hide_code=True)
+def _intro():
+    import marimo as mo
+    mo.md(
+        """
+        # \U0001f44b New marimo \u00b7 Databricks notebook
+
+        This notebook was created by the **marimo \u00b7 Databricks** app and is
+        running **on-behalf-of** you \u2014 every Spark / Workspace call below
+        uses your OAuth token, not the app's service principal.
+
+        Each section is a self-contained cell. Edit, delete, or duplicate them
+        as you like. Marimo re-runs only the cells whose inputs changed.
+
+        > **Note:** if you provided a workspace path when creating this
+        > notebook, the **Save** button on the app’s home page writes
+        > your edits back to that path. Otherwise it lives only in the
+        > app’s local cache until you Save-As somewhere in the workspace.
+        """
+    )
+    return (mo,)
+
+
+@app.cell
+def _imports():
+    # Everything ships from the package root. Each name is a lazily-built
+    # singleton that's bound to the *current user* inside the app.
+    from marimo_databricks_connect import (
+        spark,             # databricks.connect DatabricksSession (serverless)
+        dbutils,           # pyspark.dbutils.DBUtils bound to ``spark``
+        dbfs,              # fsspec FS rooted at /Volumes
+        workspace,         # fsspec FS rooted at the Workspace tree (/Users, /Repos, ...)
+        external_location, # fn(name_or_uri) -> fsspec FS for a UC external location
+        ui,                # marimo UI helpers (selectors, etc.)
+        # Catalog / Data-sources panel filtering
+        include_catalogs, exclude_catalogs, show_all_catalogs, prefetch,
+        # Widgets
+        table_widget, schema_widget, workspace_widget, acl_widget,
+        principal_widget, genie_widget, secret_scope_widget,
+        external_location_widget, cluster_widget, warehouse_widget,
+        serving_endpoint_widget, app_widget, pipeline_widget, job_widget,
+        compute_widget, pipelines_widget, workflows_widget,
+        unity_catalog_widget, vector_search_endpoint_widget,
+        vector_index_widget,
+    )
+    return (
+        acl_widget, app_widget, cluster_widget, compute_widget, dbfs,
+        dbutils, exclude_catalogs, external_location,
+        external_location_widget, genie_widget, include_catalogs,
+        job_widget, pipeline_widget, pipelines_widget, prefetch,
+        principal_widget, schema_widget, secret_scope_widget,
+        serving_endpoint_widget, show_all_catalogs, spark, table_widget,
+        ui, unity_catalog_widget, vector_index_widget,
+        vector_search_endpoint_widget, warehouse_widget, workflows_widget,
+        workspace, workspace_widget,
+    )
+
+
+@app.cell(hide_code=True)
+def _spark_intro(mo):
+    mo.md(
+        """
+        ## \u26a1 Spark & SQL
+
+        ``spark`` is a regular ``DatabricksSession`` from
+        ``databricks-connect``. Use it like any Spark session. DataFrames
+        render lazily \u2014 marimo only materialises what's visible.
+        """
+    )
+    return
+
+
+@app.cell
+def _df(spark):
+    # A tiny lazy DataFrame against the public sample dataset.
+    df = spark.read.table("samples.nyctaxi.trips").limit(25)
+    df
+    return (df,)
+
+
+@app.cell
+def _sql(mo, spark):
+    # Inline SQL via marimo's mo.sql. ``engine=spark`` runs through
+    # databricks-connect, so anything your user can query from a notebook
+    # cluster works here too.
+    result = mo.sql("SELECT count(*) AS n FROM samples.nyctaxi.trips", engine=spark)
+    result
+    return (result,)
+
+
+@app.cell(hide_code=True)
+def _sources_intro(mo):
+    mo.md(
+        """
+        ## \U0001f5c2\ufe0f Data sources panel & autocomplete
+
+        ``include_catalogs`` / ``exclude_catalogs`` filter what shows up in
+        marimo's **Data sources** panel (left sidebar). They do *not* limit
+        what SQL can query \u2014 they just keep the panel manageable in
+        large workspaces. ``prefetch()`` warms the schema cache so
+        autocomplete on table/column names works without waiting.
+        """
+    )
+    return
+
+
+@app.cell
+def _filter(include_catalogs, prefetch):
+    # Show ``samples`` (and the active catalog) in the Data sources panel,
+    # then prefetch table metadata for fast autocomplete.
+    include_catalogs("samples")
+    prefetch()
+    return
+
+
+@app.cell(hide_code=True)
+def _storage_intro(mo):
+    mo.md(
+        """
+        ## \U0001f4c1 Storage browsers
+
+        Each of these is an ``fsspec.AbstractFileSystem`` and is automatically
+        picked up by marimo's **Storage** panel:
+
+        * ``workspace`` \u2014 your Workspace tree (notebooks, files, Repos).
+        * ``dbfs``       \u2014 ``/Volumes`` via ``dbutils.fs``.
+        * ``external_location("name_or_abfss_uri")`` \u2014 a UC external
+          location, returned as a fresh fsspec FS rooted at that volume.
+        """
+    )
+    return
+
+
+@app.cell
+def _ls(workspace):
+    # List the root of the Workspace tree using the OBO token.
+    workspace.ls("/")[:10]
+    return
+
+
+@app.cell
+def _ext(external_location):
+    # Bind an external-location FS \u2014 mark it `_` so the import counts
+    # as "used" without doing any IO if you don't need it.
+    _ = external_location  # e.g. landing = external_location("landing_zone")
+    return
+
+
+@app.cell(hide_code=True)
+def _widgets_intro(mo):
+    mo.md(
+        """
+        ## \U0001f9e9 Widgets
+
+        Drop-in anywidgets backed by the Databricks SDK. Uncomment one and
+        replace the placeholder id/name with something from your workspace.
+        """
+    )
+    return
+
+
+@app.cell
+def _widget_examples(
+    table_widget, workspace_widget, acl_widget, principal_widget,
+    genie_widget, cluster_widget, warehouse_widget, serving_endpoint_widget,
+    secret_scope_widget, external_location_widget, app_widget,
+    pipeline_widget, job_widget, schema_widget,
+):
+    # workspace_widget()                                # Workspace browser
+    # acl_widget()                                      # Permissions explorer
+    # principal_widget("you@example.com")               # User / SP details
+    # table_widget("samples.nyctaxi.trips")             # UC table summary
+    # schema_widget("samples", "nyctaxi")               # UC schema summary
+    # genie_widget("<genie-space-id>")                  # Genie Q&A
+    # cluster_widget("<cluster-id>")                    # All-purpose cluster
+    # warehouse_widget("<warehouse-id>")                # SQL warehouse
+    # serving_endpoint_widget("<endpoint-name>")        # Model-serving endpoint
+    # secret_scope_widget("<scope-name>")               # Secret scope
+    # external_location_widget("<location-name>")       # UC external location
+    # app_widget("<app-name>")                          # Databricks App
+    # pipeline_widget("<pipeline-id>")                  # DLT pipeline
+    # job_widget("<job-id>")                            # Workflow job
+    return
+
+
+@app.cell(hide_code=True)
+def _selectors_intro(mo):
+    mo.md(
+        """
+        ## \U0001f3af Selectors
+
+        ``ui`` exposes Databricks-aware ``marimo`` selectors. They render as
+        regular ``mo.ui`` elements but populate themselves from the SDK using
+        the OBO token.
+        """
+    )
+    return
+
+
+@app.cell
+def _selector(ui):
+    # A dropdown of catalogs the current user can see. ``ui.catalog/schema/
+    # table/column/cluster/warehouse/...`` are all live SDK-backed selectors.
+    catalog = ui.catalog()
+    catalog
+    return (catalog,)
+
+
+@app.cell
+def _selected(catalog, mo):
+    mo.md(f"You picked: **{catalog.value or '(none)'}**")
+    return
+
+
+if __name__ == "__main__":
+    app.run()
+'''
+
+
+def render_starter_notebook() -> str:
+    """Return the source code for a fresh starter notebook."""
+    return STARTER_NOTEBOOK
