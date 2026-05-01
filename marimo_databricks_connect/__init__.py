@@ -104,6 +104,12 @@ def _build_spark() -> Any:
         if host:
             builder = builder.host(host)
         builder = builder.token(token)
+        # Force PAT auth so the SDK Config underlying DatabricksSession
+        # ignores DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET that the
+        # Databricks App injects for its own service principal (otherwise
+        # the unified-auth validator errors with "more than one
+        # authorization method configured: oauth and pat").
+        builder = builder.sdkConfig({"auth_type": "pat"})
     # Otherwise fall back to the unified auth chain (env vars,
     # ~/.databrickscfg, az login → ARM token, app service principal, ...).
     return builder.getOrCreate()
@@ -139,7 +145,11 @@ def _build_workspace_client() -> Any:
 
     host, token = _obo.get_credentials()
     if token:
-        return WorkspaceClient(host=host, token=token)
+        # Force PAT auth so the SDK ignores any DATABRICKS_CLIENT_ID /
+        # DATABRICKS_CLIENT_SECRET env vars that Databricks Apps inject for
+        # the app's service principal -- otherwise the unified-auth validator
+        # sees both PAT and OAuth configured and refuses to pick one.
+        return WorkspaceClient(host=host, token=token, auth_type="pat")
     return WorkspaceClient()
 
 
