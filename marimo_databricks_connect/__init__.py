@@ -30,8 +30,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import _obo  # noqa: F401  (binds submodule so __getattr__ doesn't recurse)
-from . import ui  # noqa: F401  (mo.ui-style selector factories: mdc.ui.catalog(), ...)
+from . import (
+    _obo,  # noqa: F401  (binds submodule so __getattr__ doesn't recurse)
+    ui,  # noqa: F401  (mo.ui-style selector factories: mdc.ui.catalog(), ...)
+)
 
 __all__ = [
     "ui",

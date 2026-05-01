@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 from typing import Iterable
 
-
 _PAGE = """<!doctype html>
 <html lang="en">
 <head>
@@ -41,10 +40,28 @@ _PAGE = """<!doctype html>
 
 
 def render_page(*, title: str, user: str, body: str) -> str:
+    """Render a full HTML page.
+
+    Args:
+        title (str): The title of the page.
+        user (str): The name of the signed-in user.
+        body (str): The HTML content of the page body.
+
+    Returns:
+        str: The rendered HTML page.
+    """
     return _PAGE.format(title=html.escape(title), user=html.escape(user), body=body)
 
 
 def render_breadcrumbs(path: str) -> str:
+    """Render breadcrumb navigation for a given path.
+
+    Args:
+        path (str): The directory path to render breadcrumbs for.
+
+    Returns:
+        str: HTML breadcrumb navigation.
+    """
     parts = [p for p in path.split("/") if p]
     crumbs = ['<a href="/">/</a>']
     accum = ""
@@ -55,6 +72,15 @@ def render_breadcrumbs(path: str) -> str:
 
 
 def render_listing(entries: Iterable[dict], current_path: str) -> str:
+    """Render a directory listing.
+
+    Args:
+        entries (Iterable[dict]): List of entry items to render.
+        current_path (str): The current directory path.
+
+    Returns:
+        str: HTML listing of directory contents.
+    """
     items: list[str] = []
     has_any = False
     for e in entries:
@@ -85,4 +111,12 @@ def render_listing(entries: Iterable[dict], current_path: str) -> str:
 
 
 def render_error(message: str) -> str:
+    """Render an error message.
+
+    Args:
+        message (str): The error message to render.
+
+    Returns:
+        str: HTML error message.
+    """
     return f'<div class="err">{html.escape(message)}</div>'
