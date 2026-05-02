@@ -262,6 +262,37 @@ _RESERVED_BASENAMES = frozenset(
 # ``/m/<slug>/<basename_no_ext>`` to the file.
 
 _META_NAME = ".meta.json"
+# Sentinel ``user_key`` written to meta when no OBO identity is in scope
+# (i.e. local development against the unified auth chain). Drafts owned by
+# this key are visible to every local-dev session.
+_LOCAL_DEV_USER_KEY = "__local__"
+
+
+def _user_key_for(user: Optional[UserIdentity]) -> str:
+    """Return the per-user ownership key written into draft metadata.
+
+    Falls back to ``_LOCAL_DEV_USER_KEY`` for the no-OBO case so single-user
+    local development still sees its own drafts. In production every request
+    carries an ``X-Forwarded-Email`` / ``X-Forwarded-User`` header, so two
+    real users will never collide on this key.
+    """
+    if user is None:
+        return _LOCAL_DEV_USER_KEY
+    return user.email or user.user or _LOCAL_DEV_USER_KEY
+
+
+def _user_can_access(meta: dict, user_key: str) -> bool:
+    """Should ``user_key`` see / mutate the draft described by ``meta``?
+
+    A draft with no recorded owner (legacy entry from before per-user
+    tracking landed) is hidden from authenticated users to avoid leaking
+    other people's notebooks; local-dev sessions still see them so the
+    cleanup path is obvious.
+    """  # noqa: D400
+    owner = meta.get("user_key")
+    if owner is None:
+        return user_key == _LOCAL_DEV_USER_KEY
+    return owner == user_key
 
 
 def _cache_dir(slug: str) -> Path:
@@ -337,8 +368,12 @@ def _save_meta(slug: str, meta: dict) -> None:
     _meta_path(slug).write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _list_drafts() -> list[dict]:
-    """Return cached notebooks (newest first) with save state for the index page."""
+def _list_drafts(user_key: str) -> list[dict]:
+    """Return cached notebooks owned by ``user_key`` (newest first).
+
+    Drafts owned by other users are filtered out so multi-tenant Apps
+    deployments don't leak each other's workspace paths or filenames.
+    """
     out: list[dict] = []
     for d in NOTEBOOK_CACHE.iterdir():
         if not d.is_dir():
@@ -348,11 +383,14 @@ def _list_drafts() -> list[dict]:
         if cache is None:
             continue
         meta = _load_meta(slug)
+        if not _user_can_access(meta, user_key):
+            continue
         try:
             mtime = cache.stat().st_mtime
         except OSError:
             continue
         uploaded = float(meta.get("last_uploaded_mtime") or 0.0)
+        dirty = mtime > uploaded + 0.5  # 0.5s slack for fs timestamp jitter
         out.append(
             {
                 "slug": slug,
@@ -361,7 +399,9 @@ def _list_drafts() -> list[dict]:
                 "workspace_path": meta.get("workspace_path"),
                 "mtime": mtime,
                 "last_uploaded_mtime": uploaded,
-                "dirty": mtime > uploaded + 0.5,  # 0.5s slack for fs timestamp jitter
+                "dirty": dirty,
+                "last_save_error": meta.get("last_save_error"),
+                "last_save_error_at": meta.get("last_save_error_at"),
             }
         )
     out.sort(key=lambda d: d["mtime"], reverse=True)
@@ -400,16 +440,20 @@ def _save_slug_to_workspace(user: UserIdentity, slug: str) -> str:
     """Push the cached notebook at ``slug`` back to its tracked workspace path.
 
     Returns the workspace path written. Raises ``HTTPException`` on usage errors.
+    The slug's owner (``meta['user_key']``) must match the caller's user key;
+    a mismatch is reported as 404 to avoid leaking the existence of slugs.
     """
     cache = _cache_path(slug)
     if cache is None:
         raise HTTPException(404, f"No cached notebook for slug {slug!r}")
     meta = _load_meta(slug)
+    if not _user_can_access(meta, _user_key_for(user)):
+        raise HTTPException(404, f"No cached notebook for slug {slug!r}")
     ws_path = meta.get("workspace_path")
     if not ws_path:
         raise HTTPException(
             400,
-            f"Notebook {slug!r} has no workspace target. Use 'Save as' to choose one.",
+            f"Notebook {slug!r} has no workspace target. Use 'Move to…' to pick one.",
         )
     source = cache.read_bytes()
     _import_to_workspace(user, ws_path, source)
@@ -454,6 +498,7 @@ def _export_notebook(user: UserIdentity, ws_path: str) -> Path:
         {
             "workspace_path": ws_path,
             "filename": filename,
+            "user_key": _user_key_for(user),
             "last_uploaded_mtime": target.stat().st_mtime,
             "origin": "workspace",
         },
@@ -487,6 +532,15 @@ def _push_cache_file_to_workspace(file_path: str, user: Optional[UserIdentity]) 
             LOGGER.debug("Save: %s is outside NOTEBOOK_CACHE, skipping", file_path)
             return
         meta = _load_meta(slug)
+        # Refuse to push someone else's draft to the workspace using *this*
+        # user's token. Should never happen in normal use (the slug URL is
+        # owned by the user that exported it), but guard against bad meta
+        # or someone hand-crafting a websocket connection.
+        owner = meta.get("user_key")
+        caller = _user_key_for(user)
+        if owner is not None and owner != caller:
+            LOGGER.warning("Save: refusing to push slug owned by %r as user %r", owner, caller)
+            return
         ws_path = meta.get("workspace_path")
         if not ws_path:
             LOGGER.info("Save: slug %r has no workspace_path — keeping local-only", slug)
@@ -495,12 +549,25 @@ def _push_cache_file_to_workspace(file_path: str, user: Optional[UserIdentity]) 
         # use the right basename if marimo ever rewrote it.
         meta["filename"] = p.name
         source = p.read_bytes()
-        _import_to_workspace(user, ws_path, source)
+        try:
+            _import_to_workspace(user, ws_path, source)
+        except Exception as exc:  # noqa: BLE001
+            # Surface the failure on the index page so the user knows their
+            # marimo Save button didn't actually round-trip to the workspace.
+            from datetime import datetime, timezone
+
+            meta["last_save_error"] = f"{type(exc).__name__}: {exc}"[:500]
+            meta["last_save_error_at"] = datetime.now(timezone.utc).isoformat()
+            _save_meta(slug, meta)
+            LOGGER.exception("Failed to push %s back to workspace", file_path)
+            return
         meta["last_uploaded_mtime"] = p.stat().st_mtime
+        meta.pop("last_save_error", None)
+        meta.pop("last_save_error_at", None)
         _save_meta(slug, meta)
         LOGGER.info("Saved %s back to workspace path %s", p, ws_path)
     except Exception:  # noqa: BLE001
-        LOGGER.exception("Failed to push %s back to workspace", file_path)
+        LOGGER.exception("Unexpected error pushing %s back to workspace", file_path)
 
 
 def workspace_save_middleware_factory(app):
@@ -650,7 +717,7 @@ def build_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Failed to list workspace path %r", path)
             listing = render_error(f"Failed to list {path!r}: {exc}")
-        body = render_drafts_section(_list_drafts()) + listing
+        body = render_drafts_section(_list_drafts(_user_key_for(user))) + listing
         return HTMLResponse(
             render_page(
                 title=f"Workspace: {path}",
@@ -712,7 +779,11 @@ def build_app() -> FastAPI:
             LOGGER.exception("Failed to write starter notebook to %s", target)
             raise HTTPException(500, f"Could not create starter notebook: {exc}") from exc
 
-        meta: dict = {"origin": "new", "filename": filename}
+        meta: dict = {
+            "origin": "new",
+            "filename": filename,
+            "user_key": _user_key_for(user),
+        }
         if ws_path:
             try:
                 _import_to_workspace(user, ws_path, target.read_bytes())
@@ -739,13 +810,19 @@ def build_app() -> FastAPI:
         slug = (form.get("slug") or "").strip()
         if not slug:
             raise HTTPException(400, "`slug` is required")
+        # Per-user access check: ensure the caller actually owns this slug.
+        # Reported as 404 (not 403) so we don't leak the existence of
+        # other users' slugs to a guesser.
+        existing = _load_meta(slug)
+        if existing and not _user_can_access(existing, _user_key_for(user)):
+            raise HTTPException(404, f"No cached notebook for slug {slug!r}")
         new_target = (form.get("workspace_path") or "").strip()
         if new_target:
             if not new_target.startswith("/"):
                 raise HTTPException(400, "`workspace_path` must be absolute")
-            meta = _load_meta(slug)
-            meta["workspace_path"] = new_target
-            _save_meta(slug, meta)
+            existing["workspace_path"] = new_target
+            existing.setdefault("user_key", _user_key_for(user))
+            _save_meta(slug, existing)
         try:
             _save_slug_to_workspace(user, slug)
         except HTTPException:
@@ -759,12 +836,17 @@ def build_app() -> FastAPI:
     async def delete_draft(request: Request) -> RedirectResponse:
         """Remove a cached notebook (and its sidecar) from NOTEBOOK_CACHE.
 
-        The workspace copy, if any, is left untouched.
+        The workspace copy, if any, is left untouched. Only the slug's owner
+        (per ``meta['user_key']``) may delete it.
         """
+        user = get_request_user(request)
         form = await request.form()
         slug = (form.get("slug") or "").strip()
         if not slug or "/" in slug or slug.startswith("."):
             raise HTTPException(400, "invalid `slug`")
+        meta = _load_meta(slug)
+        if meta and not _user_can_access(meta, _user_key_for(user)):
+            raise HTTPException(404, f"No cached notebook for slug {slug!r}")
         d = _cache_dir(slug)
         if d.exists():
             try:
@@ -797,13 +879,17 @@ def build_app() -> FastAPI:
         return RedirectResponse(url=_open_url(slug), status_code=303)
 
     @app.get("/open/{slug}")
-    async def open_slug(slug: str) -> RedirectResponse:
+    async def open_slug(slug: str, request: Request) -> RedirectResponse:
         """Resolve a slug to its current ``/m/<slug>/<basename>`` URL.
 
-        Used by older bookmarks / templates that only know the slug.
+        Used by older bookmarks / templates that only know the slug. The
+        caller must own the slug; otherwise we report 404 to avoid leaking
+        the existence of other users' drafts.
         """
+        user = get_request_user(request)
         cache = _cache_path(slug)
-        if cache is None:
+        meta = _load_meta(slug)
+        if cache is None or (meta and not _user_can_access(meta, _user_key_for(user))):
             raise HTTPException(404, f"No cached notebook for slug {slug!r}")
         return RedirectResponse(url=_open_url(slug, cache.name), status_code=303)
 
