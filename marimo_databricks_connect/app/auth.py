@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .. import _obo
@@ -74,8 +74,12 @@ def _databricks_host() -> Optional[str]:
         return None
 
 
-def identity_from_request(request: Request) -> UserIdentity:
-    """Extract OBO identity from incoming request headers."""
+def identity_from_request(request: HTTPConnection) -> UserIdentity:
+    """Extract OBO identity from incoming request headers.
+
+    Accepts any :class:`starlette.requests.HTTPConnection` (covers both
+    ``Request`` for HTTP and ``WebSocket`` for the marimo kernel socket).
+    """
     h = request.headers
     token = h.get(HEADER_TOKEN)
     if not token:
@@ -120,8 +124,11 @@ class OboMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        request = Request(scope)
-        ident = identity_from_request(request)
+        # NB: use HTTPConnection (not Request) -- ``Request(scope)`` asserts
+        # ``scope['type'] == 'http'`` and would raise AssertionError on every
+        # WebSocket upgrade, killing the marimo kernel socket and surfacing
+        # to the user as a misleading "kernel not found" error.
+        ident = identity_from_request(HTTPConnection(scope))
         if ident.token:
             state = _obo.set_credentials(ident.host, ident.token)
             scope.setdefault("state", {})
