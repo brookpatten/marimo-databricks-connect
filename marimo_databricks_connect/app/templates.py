@@ -54,6 +54,8 @@ _PAGE = """<!doctype html>
              border-radius: 10px; }}
     .pill.dirty {{ background: #fff3bf; color: #7c5800; border: 1px solid #f5d76e; }}
     .pill.clean {{ background: #e6ffed; color: #196c2e; border: 1px solid #b6e8c4; }}
+    .pill.error {{ background: #ffe1e1; color: #a40000; border: 1px solid #f3a8a8;
+                   font-weight: 600; }}
   </style>
 </head>
 <body>
@@ -190,9 +192,21 @@ def _format_age(seconds: float) -> str:
 def render_drafts_section(drafts: Iterable[dict]) -> str:
     """Render the “Drafts” (cached notebook) panel for the index page.
 
-    Each draft dict carries: ``slug``, ``workspace_path`` (or None), ``mtime``,
-    ``last_uploaded_mtime``, ``dirty``. Rendered as a small table with Open
-    and Save buttons (Save is a POST form so it survives page refresh).
+    Each draft dict carries: ``slug``, ``filename``, ``open_url``,
+    ``workspace_path`` (or None), ``mtime``, ``last_uploaded_mtime``,
+    ``dirty``, ``last_save_error`` (or None), ``last_save_error_at``.
+
+    Saves now happen automatically when the user clicks Save inside marimo
+    (a server middleware mirrors the freshly-written file to the workspace).
+    The per-row UI here is therefore focused on:
+
+    * **Open** — jump back into a recently-edited notebook.
+    * **Move to…** — retarget the workspace path the auto-save writes to
+      (the only thing marimo's own UI can't do, since it has no view of
+      the Databricks workspace tree).
+    * **Retry save** — surfaced when the auto-save failed (with the
+      error message); clicking re-attempts the upload.
+    * **Delete** — evict from the local cache (workspace copy untouched).
     """
     import time
 
@@ -206,21 +220,25 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
         ws_path = d.get("workspace_path") or ""
         ws_disp = html.escape(ws_path) if ws_path else '<span class="empty">(local only)</span>'
         age = _format_age(max(0.0, now - d["mtime"]))
-        if d["dirty"]:
+        err = d.get("last_save_error")
+        if err:
+            status = '<span class="pill error">save failed</span>'
+        elif d["dirty"]:
             status = '<span class="pill dirty">unsaved</span>'
         elif ws_path:
             status = '<span class="pill clean">saved</span>'
         else:
             status = '<span class="pill dirty">local only</span>'
-        # Save form: ``slug`` plus an inline ``workspace_path`` input that
-        # doubles as Save-As when the user edits the path before clicking.
-        save_form = (
+        # "Move to…" form: retarget the workspace path the auto-save uses.
+        # Submitting an unchanged path also acts as a manual retry, which
+        # is handy when ``last_save_error`` is set.
+        move_form = (
             '<form class="inline" method="post" action="/save">'
             f'<input type="hidden" name="slug" value="{slug}">'
             '<input type="hidden" name="return_to" value="/">'
             '<input class="path-input" type="text" name="workspace_path" '
             f'value="{html.escape(ws_path)}" placeholder="/Users/...">'
-            '<button class="btn secondary" type="submit">Save</button>'
+            '<button class="btn secondary" type="submit">Move</button>'
             "</form>"
         )
         url = html.escape(d.get("open_url") or "/open/" + d["slug"] + "/")
@@ -235,18 +253,45 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
             "</form>"
         )
         filename_disp = html.escape(d.get("filename") or "(unknown).py")
+        # Optional error banner row, surfaced when the most recent
+        # auto-save couldn't reach the workspace (logged-and-swallowed in
+        # the middleware so it doesn't break marimo's UX).
+        err_banner = ""
+        if err:
+            retry_form = (
+                '<form class="inline" method="post" action="/save" '
+                'style="margin-left:0.5rem">'
+                f'<input type="hidden" name="slug" value="{slug}">'
+                '<input type="hidden" name="return_to" value="/">'
+                '<button class="btn" type="submit">Retry save</button>'
+                "</form>"
+            )
+            err_at = d.get("last_save_error_at")
+            err_at_disp = f" at {html.escape(str(err_at))}" if err_at else ""
+            err_banner = (
+                '<tr class="error-row"><td colspan="4">'
+                '<div class="err" style="display:flex;align-items:center;gap:0.5rem">'
+                f'<div style="flex:1"><strong>Auto-save failed{err_at_disp}:</strong> '
+                f"<code>{html.escape(str(err))}</code></div>"
+                f"{retry_form}"
+                "</div></td></tr>"
+            )
         rows.append(
             f"<tr><td>{open_btn}</td>"
             f'<td><div class="draft-path">{ws_disp}</div>'
             f'<div style="color:#888;font-size:0.75rem;margin-top:0.15rem">'
             f"{filename_disp} · slug: {slug} · edited {age}</div></td>"
             f"<td>{status}</td>"
-            f"<td>{save_form}</td>"
-            f"<td>{delete_form}</td></tr>"
+            f"<td>{move_form} {delete_form}</td></tr>"
+            f"{err_banner}"
         )
     return (
         '<div class="drafts">'
-        "<h2>Drafts (this app session)</h2>"
+        "<h2>Drafts (this app session) "
+        '<span style="font-weight:normal;font-size:0.8rem;color:#666">'
+        "— Save in the editor auto-pushes to the workspace; "
+        "use <em>Move to…</em> to retarget the path."
+        "</span></h2>"
         '<table class="drafts-table">' + "".join(rows) + "</table>"
         "</div>"
     )
