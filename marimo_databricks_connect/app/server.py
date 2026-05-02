@@ -140,7 +140,15 @@ def _basename_for(ws_path: str) -> str:
     Databricks notebook paths have no extension; plain workspace files keep
     theirs. Always normalise to ``<name>.py`` so marimo's UI shows it as a
     Python notebook and the dynamic-directory router can find it.
+
+    The returned name is also guarded against shadowing top-level Python
+    packages: marimo's kernel subprocess prepends the notebook's directory
+    to ``sys.path``, so a file called e.g. ``marimo.py`` or ``pyspark.py``
+    would break ``import marimo`` from inside the notebook and crash the
+    kernel before it can connect. We prefix any such name with ``nb_``.
     """
+    import importlib.util
+
     leaf = (ws_path.rsplit("/", 1)[-1] or "notebook").strip()
     leaf = _SLUG_RE.sub("_", leaf).strip("_") or "notebook"
     if leaf.endswith("_py"):
@@ -149,7 +157,36 @@ def _basename_for(ws_path: str) -> str:
         leaf = leaf + ".py"
     if leaf.startswith("_"):
         leaf = "nb" + leaf  # DynamicDirectoryMiddleware skips ``_*.py``
+    stem = leaf[:-3]
+    # Avoid shadowing importable top-level modules (most importantly
+    # ``marimo`` itself, but also ``pyspark``, ``databricks``, ...).
+    try:
+        shadows = importlib.util.find_spec(stem) is not None
+    except (ImportError, ValueError):
+        shadows = False
+    if shadows or stem in _RESERVED_BASENAMES:
+        leaf = f"nb_{leaf}"
     return leaf
+
+
+# Names that aren't necessarily importable in the current process but that
+# the notebook code is virtually guaranteed to import — keep them out of
+# the basename slot regardless of what's installed at app build time.
+_RESERVED_BASENAMES = frozenset(
+    {
+        "marimo",
+        "pyspark",
+        "databricks",
+        "fastapi",
+        "starlette",
+        "uvicorn",
+        "pandas",
+        "numpy",
+        "sklearn",
+        "scipy",
+        "matplotlib",
+    }
+)
 
 
 # ---- per-slug cache layout / metadata sidecar ----------------------------
