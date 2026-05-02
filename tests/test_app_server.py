@@ -332,3 +332,290 @@ def test_workspace_save_middleware_pushes_to_workspace(tmp_path, monkeypatch):
     # Sidecar updated with the new upload time.
     meta = json.loads((d / ".meta.json").read_text())
     assert meta["last_uploaded_mtime"] > 0
+
+
+# ---- per-user filtering / access control ---------------------------------
+
+
+def _write_draft(tmp_path, slug, *, user_key, ws_path="/Users/x/n.py", filename="n.py"):
+    import json
+    d = tmp_path / slug
+    d.mkdir(exist_ok=True)
+    (d / filename).write_text("# code\n")
+    meta = {"workspace_path": ws_path, "filename": filename, "user_key": user_key}
+    (d / ".meta.json").write_text(json.dumps(meta))
+    return d
+
+
+def test_drafts_are_filtered_by_user(client, tmp_path, monkeypatch):
+    """alice's index page must not show bob's drafts."""
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    _write_draft(tmp_path, "alice_draft", user_key="alice@x", ws_path="/Users/alice/a.py")
+    _write_draft(tmp_path, "bob_draft", user_key="bob@x", ws_path="/Users/bob/b.py")
+    fake = MagicMock()
+    fake.workspace.list.return_value = []
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        r = client.get(
+            "/",
+            headers={
+                "X-Forwarded-Access-Token": "tok",
+                "X-Forwarded-Email": "alice@x",
+            },
+        )
+    assert r.status_code == 200
+    assert "alice_draft" in r.text
+    assert "/Users/alice/a.py" in r.text
+    assert "bob_draft" not in r.text
+    assert "/Users/bob/b.py" not in r.text
+
+
+def test_save_rejects_non_owner(client, tmp_path, monkeypatch):
+    """bob can't /save (or /save-as) alice's draft — reported as 404."""
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    _write_draft(tmp_path, "alices", user_key="alice@x")
+    fake = MagicMock()
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        r = client.post(
+            "/save",
+            data={"slug": "alices"},
+            headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "bob@x"},
+        )
+    assert r.status_code == 404
+    fake.workspace.import_.assert_not_called()
+
+
+def test_delete_rejects_non_owner(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    d = _write_draft(tmp_path, "alices2", user_key="alice@x")
+    r = client.post(
+        "/delete-draft",
+        data={"slug": "alices2"},
+        headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "bob@x"},
+    )
+    assert r.status_code == 404
+    # Files untouched.
+    assert (d / "n.py").exists()
+
+
+def test_open_slug_rejects_non_owner(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    _write_draft(tmp_path, "alices3", user_key="alice@x")
+    r = client.get(
+        "/open/alices3",
+        headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "bob@x"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 404
+
+
+def test_new_records_user_key(client, tmp_path, monkeypatch):
+    """POST /new writes the caller's user_key into the sidecar."""
+    import json
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    fake = MagicMock()
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        r = client.post(
+            "/new",
+            data={"workspace_path": "/Users/alice@x/marimo/x.py"},
+            headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "alice@x"},
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    metas = list(tmp_path.rglob("*.meta.json"))
+    assert len(metas) == 1
+    meta = json.loads(metas[0].read_text())
+    assert meta["user_key"] == "alice@x"
+
+
+# ---- save-error capture --------------------------------------------------
+
+
+def test_workspace_save_middleware_records_error_on_failure(tmp_path, monkeypatch):
+    """When the workspace import_ raises, the meta sidecar gets last_save_error."""
+    import json
+    from marimo_databricks_connect.app import server as server_mod
+    from marimo_databricks_connect.app.auth import UserIdentity
+
+    monkeypatch.setattr(server_mod, "NOTEBOOK_CACHE", tmp_path)
+    slug = "failsave"
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "failsave.py").write_text("# x\n")
+    (d / ".meta.json").write_text(
+        json.dumps(
+            {
+                "workspace_path": "/Users/me/x.py",
+                "filename": "failsave.py",
+                "user_key": "me@x",
+            }
+        )
+    )
+
+    async def inner_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    mw = server_mod.workspace_save_middleware_factory(inner_app)
+    user = UserIdentity(user="me", email="me@x", token="tok", host="https://x")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/kernel/save",
+        "headers": [],
+        "state": {"user": user},
+        "marimo_app_file": str(d / "failsave.py"),
+    }
+
+    fake = MagicMock()
+    fake.workspace.import_.side_effect = RuntimeError("workspace boom")
+
+    async def send(msg):
+        pass
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    import asyncio
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        asyncio.run(mw(scope, receive, send))
+
+    meta = json.loads((d / ".meta.json").read_text())
+    assert "workspace boom" in meta["last_save_error"]
+    assert meta["last_save_error_at"]
+    # And the index page surfaces the error + a retry button.
+    fake2 = MagicMock()
+    fake2.workspace.list.return_value = []
+    client = TestClient(asgi)
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake2):
+        r = client.get(
+            "/",
+            headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "me@x"},
+        )
+    assert "Auto-save failed" in r.text
+    assert "workspace boom" in r.text
+    assert "Retry save" in r.text
+
+
+def test_workspace_save_middleware_clears_error_on_success(tmp_path, monkeypatch):
+    """A subsequent successful save wipes the previous error fields."""
+    import json
+    from marimo_databricks_connect.app import server as server_mod
+    from marimo_databricks_connect.app.auth import UserIdentity
+
+    monkeypatch.setattr(server_mod, "NOTEBOOK_CACHE", tmp_path)
+    slug = "recover"
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "recover.py").write_text("# x\n")
+    (d / ".meta.json").write_text(
+        json.dumps(
+            {
+                "workspace_path": "/Users/me/x.py",
+                "filename": "recover.py",
+                "user_key": "me@x",
+                "last_save_error": "old failure",
+                "last_save_error_at": "2020-01-01T00:00:00+00:00",
+            }
+        )
+    )
+
+    async def inner_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    mw = server_mod.workspace_save_middleware_factory(inner_app)
+    user = UserIdentity(user="me", email="me@x", token="tok", host="https://x")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/kernel/save",
+        "headers": [],
+        "state": {"user": user},
+        "marimo_app_file": str(d / "recover.py"),
+    }
+
+    fake = MagicMock()
+
+    async def send(msg):
+        pass
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    import asyncio
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        asyncio.run(mw(scope, receive, send))
+
+    meta = json.loads((d / ".meta.json").read_text())
+    assert "last_save_error" not in meta
+    assert "last_save_error_at" not in meta
+
+
+def test_workspace_save_middleware_refuses_cross_user_push(tmp_path, monkeypatch):
+    """If a save fires for a slug owned by alice while bob is the OBO user,
+    the middleware must NOT push bob's edits to alice's workspace path.
+    """
+    import json
+    from marimo_databricks_connect.app import server as server_mod
+    from marimo_databricks_connect.app.auth import UserIdentity
+
+    monkeypatch.setattr(server_mod, "NOTEBOOK_CACHE", tmp_path)
+    slug = "alices_secret"
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "alices_secret.py").write_text("# alice's code\n")
+    (d / ".meta.json").write_text(
+        json.dumps(
+            {
+                "workspace_path": "/Users/alice/secret.py",
+                "filename": "alices_secret.py",
+                "user_key": "alice@x",
+            }
+        )
+    )
+
+    async def inner_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    mw = server_mod.workspace_save_middleware_factory(inner_app)
+    bob = UserIdentity(user="bob", email="bob@x", token="tok", host="https://x")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/kernel/save",
+        "headers": [],
+        "state": {"user": bob},
+        "marimo_app_file": str(d / "alices_secret.py"),
+    }
+    fake = MagicMock()
+
+    async def send(msg):
+        pass
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    import asyncio
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        asyncio.run(mw(scope, receive, send))
+
+    fake.workspace.import_.assert_not_called()
+
+
+def test_drafts_section_renders_move_button_not_save(client, tmp_path, monkeypatch):
+    """The per-row UI should expose Move (and Delete) but no inline Save."""
+    monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
+    _write_draft(tmp_path, "only", user_key="me@x", ws_path="/Users/me/n.py")
+    fake = MagicMock()
+    fake.workspace.list.return_value = []
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        r = client.get(
+            "/",
+            headers={"X-Forwarded-Access-Token": "tok", "X-Forwarded-Email": "me@x"},
+        )
+    assert r.status_code == 200
+    # Move button present, original "Save" button removed from the row.
+    assert ">Move<" in r.text
+    assert ">Delete<" in r.text
+    assert ">Save<" not in r.text
