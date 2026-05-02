@@ -274,12 +274,41 @@ def _export_notebook(user: UserIdentity, ws_path: str) -> Path:
 # ---- ASGI app -------------------------------------------------------------
 
 
+def _force_marimo_edit_mode() -> None:
+    """Patch marimo so its ASGI builder serves notebooks in **edit** mode.
+
+    ``marimo.create_asgi_app().with_dynamic_directory`` hard-codes
+    ``SessionMode.RUN`` (read-only/app view). We want the full editor, so we
+    wrap :class:`~marimo._server.session_manager.SessionManager` to coerce
+    ``mode=RUN`` → ``mode=EDIT`` *before* the rest of ``__init__`` runs (so
+    the token-manager / resume-strategy are built for the right mode).
+
+    Idempotent and safe to call at import time — this process serves only
+    marimo notebooks, so the patch has no other consumers.
+    """
+    from marimo._server.session_manager import SessionManager
+    from marimo._session.model import SessionMode
+
+    if getattr(SessionManager.__init__, "_mdc_edit_patched", False):
+        return
+    original_init = SessionManager.__init__
+
+    def patched_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("mode") is SessionMode.RUN:
+            kwargs["mode"] = SessionMode.EDIT
+        return original_init(self, *args, **kwargs)
+
+    patched_init._mdc_edit_patched = True  # type: ignore[attr-defined]
+    SessionManager.__init__ = patched_init  # type: ignore[method-assign]
+
+
 def _build_marimo_asgi():
     """Build the marimo ASGI app that serves the cache directory dynamically.
 
     ``with_dynamic_directory`` re-scans on each request, so notebooks freshly
     exported into NOTEBOOK_CACHE become routable immediately.
     """
+    _force_marimo_edit_mode()
     import marimo
 
     builder = marimo.create_asgi_app(quiet=True, include_code=True)
