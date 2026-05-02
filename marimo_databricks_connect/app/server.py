@@ -46,7 +46,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _default_notebook_cache() -> Path:
-    """Pick a writable cache directory **outside** ``/tmp``.
+    r"""Pick a writable cache directory **outside** ``/tmp``.
 
     The marimo frontend treats any notebook path under ``/tmp/`` (or
     ``/var/folders``, or Windows ``AppData\\Local\\Temp``) as a
@@ -62,6 +62,7 @@ def _default_notebook_cache() -> Path:
          and outside marimo's tmp denylist).
       4. As a last resort, a fresh ``mkdtemp`` under the system temp dir
          (will trigger the Save-As dialog, but at least the app starts).
+
     """
     explicit = os.environ.get("MDC_APP_NOTEBOOK_CACHE")
     if explicit:
