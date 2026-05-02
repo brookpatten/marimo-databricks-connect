@@ -99,20 +99,22 @@ def _list_workspace(user: UserIdentity, path: str) -> list[dict]:
 # ---- notebook export ------------------------------------------------------
 
 
-def _default_new_path(user: UserIdentity) -> str:
-    """Suggested workspace path for a brand-new notebook.
+def _default_new_dir(user: UserIdentity) -> str:
+    """Suggested workspace directory new notebooks land in.
 
-    ``/Users/<email>/marimo/untitled-<UTC-stamp>.py`` when we know the user;
-    otherwise an empty string (the form leaves the workspace target blank,
-    meaning local-cache only).
+    ``/Users/<email>/marimo`` when we know the user; otherwise empty (the
+    handler will fall back to the currently browsed path).
     """
-    from datetime import datetime, timezone
-
     who = user.email or user.user
     if not who:
         return ""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    return f"/Users/{who}/marimo/untitled-{stamp}.py"
+    return f"/Users/{who}/marimo"
+
+
+def _user_home(user: UserIdentity) -> str:
+    """Workspace home folder for the signed-in user, or ``/`` if unknown."""
+    who = user.email or user.user
+    return f"/Users/{who}" if who else "/"
 
 
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
@@ -307,11 +309,13 @@ def build_app() -> FastAPI:
         return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request, path: str = "/") -> HTMLResponse:
+    async def index(request: Request, path: Optional[str] = None) -> HTMLResponse:
         user = get_request_user(request)
+        if not path:
+            path = _user_home(user)
         try:
             entries = _list_workspace(user, path)
-            listing = render_listing(entries, path, default_new_path=_default_new_path(user))
+            listing = render_listing(entries, path, default_new_dir=path)
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Failed to list workspace path %r", path)
             listing = render_error(f"Failed to list {path!r}: {exc}")
@@ -338,6 +342,17 @@ def build_app() -> FastAPI:
         user = get_request_user(request)
         form = await request.form()
         ws_path = (form.get("workspace_path") or "").strip() or None
+        if ws_path is None:
+            # New form: ``directory`` + ``name`` (joined here so the slug is
+            # stable across revisits of the same workspace path).
+            directory = (form.get("directory") or "").strip()
+            name = (form.get("name") or "").strip()
+            if directory and name:
+                if "/" in name:
+                    raise HTTPException(400, "`name` must not contain '/'")
+                if not name.endswith(".py"):
+                    name = name + ".py"
+                ws_path = directory.rstrip("/") + "/" + name
         if ws_path is not None and not ws_path.startswith("/"):
             raise HTTPException(400, "`workspace_path` must be an absolute workspace path (start with /)")
 
@@ -398,6 +413,28 @@ def build_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Failed to save slug %r to workspace", slug)
             raise HTTPException(500, f"Could not save notebook {slug!r}: {exc}") from exc
+        return RedirectResponse(url=form.get("return_to") or "/", status_code=303)
+
+    @app.post("/delete-draft")
+    async def delete_draft(request: Request) -> RedirectResponse:
+        """Remove a cached notebook (and its sidecar) from NOTEBOOK_CACHE.
+
+        The workspace copy, if any, is left untouched.
+        """
+        form = await request.form()
+        slug = (form.get("slug") or "").strip()
+        if not slug or "/" in slug or slug.startswith("."):
+            raise HTTPException(400, "invalid `slug`")
+        cache = _cache_path(slug)
+        meta = _meta_path(slug)
+        for p in (cache, meta):
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                LOGGER.exception("Failed to delete %s", p)
+                raise HTTPException(500, f"Could not delete {p.name}: {exc}") from exc
         return RedirectResponse(url=form.get("return_to") or "/", status_code=303)
 
     @app.get("/edit")

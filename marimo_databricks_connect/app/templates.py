@@ -97,14 +97,14 @@ def render_breadcrumbs(path: str) -> str:
     return '<div class="crumbs">' + " / ".join(crumbs) + "</div>"
 
 
-def render_listing(entries: Iterable[dict], current_path: str, *, default_new_path: str = "") -> str:
+def render_listing(entries: Iterable[dict], current_path: str, *, default_new_dir: str = "") -> str:
     """Render a directory listing.
 
     Args:
         entries (Iterable[dict]): List of entry items to render.
         current_path (str): The current directory path.
-        default_new_path (str): Pre-filled value for the "New notebook"
-            workspace-path input. Empty string means local-cache only.
+        default_new_dir (str): Workspace directory new notebooks land in.
+            Defaults to ``current_path`` when empty.
 
     Returns:
         str: HTML listing of directory contents.
@@ -135,16 +135,28 @@ def render_listing(entries: Iterable[dict], current_path: str, *, default_new_pa
         body = '<p class="empty">No items here.</p>'
     else:
         body = '<ul class="entries">' + "".join(items) + "</ul>"
-    default = html.escape(default_new_path)
+    target_dir = default_new_dir or current_path or "/"
+    target_dir_disp = html.escape(target_dir.rstrip("/") or "/")
+    target_dir_val = html.escape(target_dir)
     toolbar = (
         '<div class="toolbar">'
-        '<form class="inline" method="post" action="/new">'
-        '<input class="path-input" type="text" name="workspace_path" '
-        f'value="{default}" placeholder="/Users/you@example.com/marimo/new.py (optional)">'
-        '<button class="btn" type="submit">+ New notebook</button>'
+        '<button class="btn" type="button" id="new-nb-btn" '
+        "onclick=\"document.getElementById('new-nb-form').style.display='inline';"
+        "this.style.display='none';"
+        "document.getElementById('new-nb-name').focus();\">+ New notebook</button>"
+        '<form class="inline" id="new-nb-form" method="post" action="/new" '
+        'style="display:none">'
+        f'<input type="hidden" name="directory" value="{target_dir_val}">'
+        f'<span class="hint" style="margin-right:0.4rem">{target_dir_disp}/</span>'
+        '<input class="path-input" type="text" id="new-nb-name" name="name" '
+        'required pattern="[^/]+" placeholder="new-notebook.py" '
+        'style="width:14rem">'
+        '<button class="btn" type="submit">OK</button>'
+        '<button class="btn secondary" type="button" '
+        "onclick=\"document.getElementById('new-nb-form').style.display='none';"
+        "document.getElementById('new-nb-btn').style.display='inline-block';\">Cancel</button>"
         "</form>"
-        '<div class="hint">Leave the path blank to keep the new notebook in '
-        "this app\u2019s local cache only.</div>"
+        f'<div class="hint">Will be created in <code>{target_dir_disp}/</code>.</div>'
         "</div>"
     )
     return render_breadcrumbs(current_path) + toolbar + body
@@ -212,12 +224,22 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
             "</form>"
         )
         open_btn = f'<a class="btn secondary" href="/m/{slug}">Open</a>'
+        delete_form = (
+            '<form class="inline" method="post" action="/delete-draft" '
+            "onsubmit=\"return confirm('Delete this draft from the local cache? "
+            "Workspace copy is not affected.');\">"
+            f'<input type="hidden" name="slug" value="{slug}">'
+            '<button class="btn secondary" type="submit" '
+            'style="color:#a00;border-color:#f3c2c2">Delete</button>'
+            "</form>"
+        )
         rows.append(
             f"<tr><td>{open_btn}</td>"
             f'<td><div class="draft-path">{ws_disp}</div>'
             f'<div style="color:#888;font-size:0.75rem;margin-top:0.15rem">slug: {slug} · edited {age}</div></td>'
             f"<td>{status}</td>"
-            f"<td>{save_form}</td></tr>"
+            f"<td>{save_form}</td>"
+            f"<td>{delete_form}</td></tr>"
         )
     return (
         '<div class="drafts">'
