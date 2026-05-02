@@ -7,7 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget, include_catalogs, prefetch, workspace_widget, workspace, ui, schema_widget
+    from marimo_databricks_connect import dbfs, dbutils, external_location, spark, exclude_catalogs, show_all_catalogs, external_location_widget, secret_scope_widget, table_widget, acl_widget, principal_widget, genie_widget, include_catalogs, prefetch, workspace_widget, workspace, ui, schema_widget, register_serving_endpoints_as_ai_providers
 
 
     return (
@@ -19,11 +19,18 @@ def _():
         mo,
         prefetch,
         principal_widget,
+        register_serving_endpoints_as_ai_providers,
         secret_scope_widget,
         spark,
         table_widget,
         workspace_widget,
     )
+
+
+@app.cell
+def _(register_serving_endpoints_as_ai_providers):
+    register_serving_endpoints_as_ai_providers(include=["databricks-claude-sonnet-4-5"])
+    return
 
 
 @app.cell
