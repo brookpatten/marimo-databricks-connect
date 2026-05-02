@@ -94,11 +94,57 @@ def _cache_key(name: str) -> Any:
     return (name, token)
 
 
+def _get_app_usage_policy_id() -> str | None:
+    """Return the usage policy id associated with the current Databricks App.
+
+    When this package runs inside a Databricks App, the Apps runtime sets
+    ``DATABRICKS_APP_NAME`` (and credentials for the app's service principal)
+    in the environment.  Workspaces can require serverless workloads to pick a
+    *usage policy*; without one, ``DatabricksSession.builder.serverless()``
+    fails with ``FALLBACK_POLICY_NOT_USABLE``.  Apps have an
+    ``effective_usage_policy_id`` field that we forward to Spark Connect so
+    queries inherit the same policy the app was deployed with.
+
+    Returns ``None`` outside of an app, when the app has no usage policy
+    attached, or when the lookup fails (e.g. the app's SP cannot read itself).
+    The result is cached for the life of the process.
+    """
+    import os
+
+    if "app_usage_policy_id" in _cache:
+        return _cache["app_usage_policy_id"]
+
+    app_name = os.environ.get("DATABRICKS_APP_NAME")
+    if not app_name:
+        _cache["app_usage_policy_id"] = None
+        return None
+
+    policy_id: str | None = None
+    try:
+        # Look the app up using the *app's* default credentials (the service
+        # principal injected by the Apps runtime), not the OBO user token --
+        # end users typically aren't allowed to read the app object.
+        from databricks.sdk import WorkspaceClient
+
+        ws = WorkspaceClient()
+        app = ws.apps.get(name=app_name)
+        policy_id = getattr(app, "effective_usage_policy_id", None) or getattr(app, "usage_policy_id", None)
+    except Exception:  # pragma: no cover - best effort
+        policy_id = None
+
+    _cache["app_usage_policy_id"] = policy_id
+    return policy_id
+
+
 def _build_spark() -> Any:
     from databricks.connect import DatabricksSession
 
     host, token = _obo.get_credentials()
-    builder = DatabricksSession.builder.serverless()
+    usage_policy_id = _get_app_usage_policy_id()
+    if usage_policy_id:
+        builder = DatabricksSession.builder.serverless(usage_policy_id=usage_policy_id)
+    else:
+        builder = DatabricksSession.builder.serverless()
     if token:
         # On-behalf-of-user: forward the caller's OAuth token from the app.
         if host:
