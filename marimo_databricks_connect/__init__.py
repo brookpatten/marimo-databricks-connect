@@ -73,6 +73,8 @@ __all__ = [
     "acl_widget",
     "permissions_widget",
     "principal_widget",
+    "register_serving_endpoints_as_ai_providers",
+    "list_serving_endpoints",
 ]
 
 _cache: dict[Any, Any] = {}
@@ -168,10 +170,18 @@ def _build_spark() -> Any:
 
     host, token = _obo.get_credentials()
     usage_policy_id = _get_app_usage_policy_id()
+    builder = DatabricksSession.builder
     if usage_policy_id:
-        builder = DatabricksSession.builder.serverless(usage_policy_id=usage_policy_id)
+        try:
+            # Newer databricks-connect (>= ~16.x) supports a kwarg.
+            builder = builder.serverless(usage_policy_id=usage_policy_id)
+        except TypeError:
+            # Older databricks-connect: pipe it through as the explicit
+            # request header that the newer client itself sets internally
+            # (see databricks.connect.headers.Headers.USAGE_POLICY_ID).
+            builder = builder.serverless().header("x-databricks-explicit-usage-policy-id", usage_policy_id)
     else:
-        builder = DatabricksSession.builder.serverless()
+        builder = builder.serverless()
     if token:
         # On-behalf-of-user: forward the caller's OAuth token from the app.
         if host:
@@ -430,6 +440,43 @@ def _register_streaming_formatter() -> None:
 
 
 _register_streaming_formatter()
+
+
+def register_serving_endpoints_as_ai_providers(**kwargs: Any) -> dict[str, Any]:
+    """Discover Databricks Model Serving endpoints and wire them into marimo's AI features.
+
+    Thin re-export of :func:`marimo_databricks_connect._ai.register_serving_endpoints_as_ai_providers`.
+    See that function for the full kwargs / behaviour.
+
+    Starts a localhost auth-refreshing proxy that forwards OpenAI-compatible
+    requests to ``<workspace>/serving-endpoints/*`` with a freshly-minted
+    bearer token on every request, then writes a ``[ai.custom_providers.databricks]``
+    block to ``marimo.toml`` so the endpoints show up in marimo's AI model
+    picker / chat / autocomplete UI. Restart ``marimo edit`` to pick up the
+    config change.
+
+    Example::
+
+        from marimo_databricks_connect import register_serving_endpoints_as_ai_providers
+
+        register_serving_endpoints_as_ai_providers(
+            include=["databricks-*"],
+            default_chat="databricks-claude-3-7-sonnet",
+        )
+    """
+    from ._ai import register_serving_endpoints_as_ai_providers as _impl
+
+    return _impl(**kwargs)
+
+
+def list_serving_endpoints(**kwargs: Any) -> list[str]:
+    """Return Databricks Model Serving endpoint names matching the given filters.
+
+    Thin re-export of :func:`marimo_databricks_connect._ai.list_serving_endpoints`.
+    """
+    from ._ai import list_serving_endpoints as _impl
+
+    return _impl(**kwargs)
 
 
 def workflows_widget(workspace_client: Any = None) -> Any:
