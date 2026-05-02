@@ -16,8 +16,13 @@ command:
 
 env:
   # Persist exported notebooks across requests in the app's writable area.
+  # NB: must NOT be under /tmp/ or /var/folders/ — the marimo frontend
+  # treats those as non-persistent and pops up a Save-As dialog every
+  # time the user clicks Save (see marimo's edit-page bundle, function
+  # `la(e)`). /var/tmp/ is writable in Apps containers and avoids that
+  # heuristic.
   - name: MDC_APP_NOTEBOOK_CACHE
-    value: "/tmp/mdc-notebooks"
+    value: "/var/tmp/mdc-notebooks"
   - name: LOG_LEVEL
     value: "info"
 

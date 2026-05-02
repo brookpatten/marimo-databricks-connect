@@ -44,10 +44,68 @@ LOGGER = logging.getLogger(__name__)
 
 # ---- configuration --------------------------------------------------------
 
-# Where exported notebooks land before being served by marimo.  Defaults to a
-# per-process tmp dir; override with MDC_APP_NOTEBOOK_CACHE for a writable
-# persistent volume in production deploys.
-NOTEBOOK_CACHE = Path(os.environ.get("MDC_APP_NOTEBOOK_CACHE") or tempfile.mkdtemp(prefix="mdc-app-"))
+
+def _default_notebook_cache() -> Path:
+    """Pick a writable cache directory **outside** ``/tmp``.
+
+    The marimo frontend treats any notebook path under ``/tmp/`` (or
+    ``/var/folders``, or Windows ``AppData\\Local\\Temp``) as a
+    non-persistent scratch file and pops up a Save-As dialog every time the
+    user hits Save — even when the file is happily round-tripping to the
+    workspace. We therefore avoid those prefixes by default.
+
+    Resolution order:
+      1. ``$MDC_APP_NOTEBOOK_CACHE`` (honoured even if it's under ``/tmp``;
+         a warning is logged so operators know save UX will be degraded).
+      2. ``$HOME/.cache/mdc-notebooks`` when ``HOME`` exists and is writable.
+      3. ``/var/tmp/mdc-notebooks`` (writable in Databricks Apps containers
+         and outside marimo's tmp denylist).
+      4. As a last resort, a fresh ``mkdtemp`` under the system temp dir
+         (will trigger the Save-As dialog, but at least the app starts).
+    """
+    explicit = os.environ.get("MDC_APP_NOTEBOOK_CACHE")
+    if explicit:
+        p = Path(explicit)
+        if str(p).startswith("/tmp/") or str(p).startswith("/var/folders"):
+            LOGGER.warning(
+                "MDC_APP_NOTEBOOK_CACHE=%s is under a path marimo treats as"
+                " non-persistent (/tmp/, /var/folders/). The marimo Save"
+                " button will keep prompting for a filename. Move the cache"
+                " to e.g. /var/tmp/mdc-notebooks or $HOME/.cache/mdc-notebooks"
+                " to fix.",
+                explicit,
+            )
+        return p
+
+    candidates: list[Path] = []
+    home = os.environ.get("HOME")
+    if home:
+        candidates.append(Path(home) / ".cache" / "mdc-notebooks")
+    candidates.append(Path("/var/tmp/mdc-notebooks"))
+
+    for c in candidates:
+        try:
+            c.mkdir(parents=True, exist_ok=True)
+            # Sanity check: write a probe file to confirm the path is writable.
+            probe = c / ".write-probe"
+            probe.write_text("ok")
+            probe.unlink()
+            return c
+        except OSError:
+            continue
+
+    fallback = Path(tempfile.mkdtemp(prefix="mdc-app-"))
+    LOGGER.warning(
+        "Falling back to %s for notebook cache; marimo will treat saved"
+        " notebooks as scratch files and prompt for a filename on Save."
+        " Set MDC_APP_NOTEBOOK_CACHE to a path outside /tmp to fix.",
+        fallback,
+    )
+    return fallback
+
+
+# Where exported notebooks land before being served by marimo.
+NOTEBOOK_CACHE = _default_notebook_cache()
 NOTEBOOK_CACHE.mkdir(parents=True, exist_ok=True)
 
 # URL prefix the dynamic marimo mount lives at.  Each ``.py`` file inside
