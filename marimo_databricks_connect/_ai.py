@@ -70,7 +70,7 @@ def list_serving_endpoints(
     include: Iterable[str] = ("*",),
     exclude: Iterable[str] = (),
     only_ready: bool = True,
-    tasks: Iterable[str] = ("llm/v1/chat",),
+    tasks: Iterable[str] = (),
 ) -> list[str]:
     """Return endpoint names matching the include/exclude globs and task filter.
 
@@ -79,9 +79,10 @@ def list_serving_endpoints(
         include: glob patterns (matched against endpoint name) to include.
         exclude: glob patterns to exclude.
         only_ready: if True, skip endpoints not in a ready state.
-        tasks: endpoint task strings to keep. Pass an empty iterable to disable
-            task filtering (useful for custom endpoints whose ``task`` field is
-            unset).
+        tasks: endpoint task strings to keep. **Empty by default** because
+            Databricks doesn't normalize the ``task`` field consistently
+            (Foundation Model endpoints often leave it unset). Pass e.g.
+            ``tasks=("llm/v1/chat",)`` if you want strict filtering.
     """
     if workspace_client is None:
         from . import _build_workspace_client
@@ -180,7 +181,7 @@ def register_serving_endpoints_as_ai_providers(
     workspace_client: Any = None,
     include: Iterable[str] = ("databricks-*",),
     exclude: Iterable[str] = (),
-    tasks: Iterable[str] = ("llm/v1/chat",),
+    tasks: Iterable[str] = (),
     provider_name: str = "databricks",
     default_chat: Optional[str] = None,
     default_edit: Optional[str] = None,
@@ -188,25 +189,37 @@ def register_serving_endpoints_as_ai_providers(
     scope: str = "project",
     write: bool = True,
     proxy_port: int = 0,
+    verbose: bool = True,
 ) -> dict[str, Any]:
     """Discover Databricks Model Serving endpoints and wire them into marimo's AI features.
 
     Starts a localhost auth-refreshing proxy that forwards OpenAI-compatible
     requests to ``<workspace>/serving-endpoints/*`` with a freshly-minted
-    bearer token on every request, then writes a ``[ai.custom_providers.<name>]``
+    bearer token on every request, then writes a ``[ai.custom_providers.<provider_name>]``
     block to ``marimo.toml`` pointing marimo at that proxy.
+
+    The ``base_url`` written to ``marimo.toml`` is the **proxy's** localhost
+    URL (e.g. ``http://127.0.0.1:54321``), *not* the workspace URL. The proxy
+    then forwards to ``<workspace>/serving-endpoints/*`` using credentials
+    obtained from the Databricks SDK (same auth chain as ``spark`` /
+    ``workspace``). You don't need to pass the workspace URL.
 
     Args:
         workspace_client: Optional ``WorkspaceClient`` (uses default auth chain).
         include: glob patterns (matched against endpoint name) to include.
             Defaults to ``("databricks-*",)`` which captures the Foundation
             Model API endpoints (``databricks-claude-*``, ``databricks-meta-*``,
-            ``databricks-gte-*``, ...).
+            ``databricks-gte-*``, ...). Pass ``("*",)`` to include everything.
         exclude: glob patterns to exclude.
-        tasks: endpoint task strings to keep. Pass ``()`` to include endpoints
-            whose task field isn't set (custom serving endpoints).
-        provider_name: namespace under which models are exposed in marimo's UI.
-            Models appear as ``<provider_name>/<endpoint-name>``.
+        tasks: optional task-string allow-list (e.g. ``("llm/v1/chat",)``).
+            Empty by default — Databricks doesn't normalize ``task`` across
+            endpoints, so filtering by it tends to drop too much.
+        provider_name: marimo namespace for these models. Models appear in the
+            marimo UI as ``<provider_name>/<endpoint-name>`` and marimo routes
+            calls to ``[ai.custom_providers.<provider_name>]`` to find the
+            ``base_url``/``api_key``. The default ``"databricks"`` is fine
+            unless you want to register multiple workspaces side-by-side under
+            different prefixes.
         default_chat: bare endpoint name to set as marimo's default chat model.
         default_edit: bare endpoint name to set as marimo's default edit model.
         default_autocomplete: bare endpoint name to set as marimo's default
@@ -216,15 +229,29 @@ def register_serving_endpoints_as_ai_providers(
         write: if False, don't touch ``marimo.toml``; just start the proxy and
             return what *would* be written.
         proxy_port: port for the localhost proxy. ``0`` picks a free port.
+        verbose: if True (default), print a short diagnostic summary of
+            what was discovered, what got filtered out, and where to look
+            next if nothing matched.
 
     Returns:
         Dict with ``provider``, ``base_url``, ``models``, ``endpoints``,
-        ``config_path``, and ``proxy``.
+        ``config_path``, ``proxy``, and ``all_endpoints`` (every endpoint the
+        workspace returned, before filtering — useful for debugging).
     """
     if workspace_client is None:
         from . import _build_workspace_client
 
         workspace_client = _build_workspace_client()
+
+    raw = list(workspace_client.serving_endpoints.list())
+    all_summary = [
+        {
+            "name": getattr(ep, "name", None),
+            "task": _endpoint_task(ep),
+            "ready": _endpoint_ready(ep),
+        }
+        for ep in raw
+    ]
 
     endpoints = list_serving_endpoints(
         workspace_client=workspace_client,
@@ -232,12 +259,18 @@ def register_serving_endpoints_as_ai_providers(
         exclude=exclude,
         tasks=tasks,
     )
+
+    if verbose:
+        _print_diagnostics(all_summary, endpoints, include, exclude, tasks)
+
     if not endpoints:
         LOG.warning(
-            "mdc: no serving endpoints matched include=%r exclude=%r tasks=%r",
+            "mdc: no serving endpoints matched include=%r exclude=%r tasks=%r "
+            "(workspace returned %d endpoint(s) total)",
             list(include),
             list(exclude),
             list(tasks),
+            len(raw),
         )
 
     from ._ai_proxy import get_or_create_proxy
@@ -276,6 +309,36 @@ def register_serving_endpoints_as_ai_providers(
         "base_url": base_url,
         "models": model_ids,
         "endpoints": endpoints,
+        "all_endpoints": all_summary,
         "config_path": str(cfg_path) if cfg_path else None,
         "proxy": proxy,
     }
+
+
+def _print_diagnostics(
+    all_summary: list[dict],
+    matched: list[str],
+    include: Iterable[str],
+    exclude: Iterable[str],
+    tasks: Iterable[str],
+) -> None:
+    """Emit a short, human-readable summary of endpoint discovery + filtering."""
+    inc = list(include)
+    exc = list(exclude)
+    tsk = list(tasks)
+    print(
+        f"mdc: workspace returned {len(all_summary)} serving endpoint(s); "
+        f"{len(matched)} matched include={inc!r} exclude={exc!r} tasks={tsk!r}."
+    )
+    if matched:
+        print("  matched:")
+        for n in matched:
+            print(f"    - {n}")
+    if not matched and all_summary:
+        print("  available endpoints (showing up to 20):")
+        for ep in all_summary[:20]:
+            print(f"    - {ep['name']}  (task={ep['task']!r}, ready={ep['ready']})")
+        print(
+            "  hint: nothing matched. Try include=('*',) to register every "
+            "endpoint, or adjust the glob to match the names above."
+        )

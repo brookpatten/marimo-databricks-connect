@@ -54,7 +54,17 @@ def test_list_filters_by_glob_and_task():
             _ep("databricks-old-completions", task="llm/v1/completions"),
         ]
     )
+    # Default tasks=() -> no task filter; just name + ready.
     names = _ai.list_serving_endpoints(workspace_client=ws, include=["databricks-*"])
+    assert names == [
+        "databricks-claude-3-7-sonnet",
+        "databricks-meta-llama",
+        "databricks-old-completions",
+    ]
+    # Strict task filter when explicitly requested.
+    names = _ai.list_serving_endpoints(
+        workspace_client=ws, include=["databricks-*"], tasks=("llm/v1/chat",)
+    )
     assert names == ["databricks-claude-3-7-sonnet", "databricks-meta-llama"]
 
 
@@ -152,6 +162,7 @@ def test_register_writes_config_and_returns_proxy(tmp_path, monkeypatch):
             include=["databricks-*"],
             default_chat="databricks-claude",
             scope="project",
+            verbose=False,
         )
         assert result["models"] == ["databricks/databricks-claude"]
         assert result["base_url"].startswith("http://127.0.0.1:")
@@ -170,10 +181,38 @@ def test_register_dry_run_does_not_write(tmp_path, monkeypatch):
     try:
         ws = _fake_ws([_ep("databricks-claude", task="llm/v1/chat")])
         result = _ai.register_serving_endpoints_as_ai_providers(
-            workspace_client=ws, write=False
+            workspace_client=ws, write=False, verbose=False
         )
         assert result["config_path"] is None
         assert not (tmp_path / "marimo.toml").exists()
+    finally:
+        _ai_proxy._reset_proxy_for_tests()
+
+
+def test_register_diagnostics_lists_available_when_no_match(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    _ai_proxy._reset_proxy_for_tests()
+    try:
+        ws = _fake_ws(
+            [
+                _ep("prod-llama", task="llm/v1/chat"),
+                _ep("my-classifier", task=None),
+            ]
+        )
+        result = _ai.register_serving_endpoints_as_ai_providers(
+            workspace_client=ws,
+            include=["databricks-*"],  # matches nothing
+            write=False,
+            verbose=True,
+        )
+        out = capsys.readouterr().out
+        assert "workspace returned 2" in out
+        assert "prod-llama" in out
+        assert "my-classifier" in out
+        assert "hint:" in out
+        assert result["models"] == []
+        # all_endpoints surfaced for programmatic inspection
+        assert {e["name"] for e in result["all_endpoints"]} == {"prod-llama", "my-classifier"}
     finally:
         _ai_proxy._reset_proxy_for_tests()
 
