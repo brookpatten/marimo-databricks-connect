@@ -75,6 +75,7 @@ __all__ = [
     "principal_widget",
     "register_serving_endpoints_as_ai_providers",
     "list_serving_endpoints",
+    "install_runtime_config_patch",
 ]
 
 _cache: dict[Any, Any] = {}
@@ -477,6 +478,23 @@ def list_serving_endpoints(**kwargs: Any) -> list[str]:
     from ._ai import list_serving_endpoints as _impl
 
     return _impl(**kwargs)
+
+
+def install_runtime_config_patch() -> None:
+    """Install the per-user runtime AI-config patch on marimo's config loader.
+
+    Call this once in your **marimo server process** (the parent that renders
+    the AI panel) so notebooks calling
+    ``register_serving_endpoints_as_ai_providers(scope="memory")`` can have
+    their providers picked up. The :mod:`marimo_databricks_connect.app`
+    server installs this automatically; you only need to call it when
+    embedding marimo into a different ASGI app.
+
+    Idempotent.
+    """
+    from ._ai import install_runtime_config_patch as _impl
+
+    _impl()
 
 
 def workflows_widget(workspace_client: Any = None) -> Any:

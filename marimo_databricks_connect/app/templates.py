@@ -223,7 +223,7 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
             '<button class="btn secondary" type="submit">Save</button>'
             "</form>"
         )
-        open_btn = f'<a class="btn secondary" href="/m/{slug}">Open</a>'
+        open_btn = f'<a class="btn secondary" href="{html.escape(d.get("open_url") or f"/open/{d['slug']}")}">Open</a>'
         delete_form = (
             '<form class="inline" method="post" action="/delete-draft" '
             "onsubmit=\"return confirm('Delete this draft from the local cache? "
@@ -233,10 +233,12 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
             'style="color:#a00;border-color:#f3c2c2">Delete</button>'
             "</form>"
         )
+        filename_disp = html.escape(d.get("filename") or "(unknown).py")
         rows.append(
             f"<tr><td>{open_btn}</td>"
             f'<td><div class="draft-path">{ws_disp}</div>'
-            f'<div style="color:#888;font-size:0.75rem;margin-top:0.15rem">slug: {slug} · edited {age}</div></td>'
+            f'<div style="color:#888;font-size:0.75rem;margin-top:0.15rem">'
+            f"{filename_disp} · slug: {slug} · edited {age}</div></td>"
             f"<td>{status}</td>"
             f"<td>{save_form}</td>"
             f"<td>{delete_form}</td></tr>"
@@ -335,8 +337,9 @@ def _ai_intro(mo):
         auth-refreshing proxy, and wires them into marimo's AI panel under
         a ``databricks/`` prefix.
 
-        ``scope="memory"`` keeps the registration in-process and keys it
-        by your OBO identity, so each user of this app sees only their own
+        ``scope="memory"`` writes a per-user JSON sidecar to a shared
+        runtime directory and the app server merges it into the marimo
+        config it serves you. Each app user sees only their own
         endpoints — nothing is written to the shared marimo config on
         disk. **Refresh this browser tab after the cell runs** so marimo's
         AI panel re-fetches the provider list.
@@ -348,14 +351,15 @@ def _ai_intro(mo):
 @app.cell
 def _ai_register(register_serving_endpoints_as_ai_providers):
     # One call: enumerate Foundation Model + custom serving endpoints,
-    # start the auth-refreshing proxy, and register the providers in
-    # an in-process registry keyed by your OBO user identity.
-    # Returns a dict with `endpoints`, `models`, `base_url`.
+    # start the auth-refreshing proxy, and write a per-user sidecar that
+    # the app server merges into the marimo config it serves you.
+    # Returns a dict with `endpoints`, `models`, `base_url`, `config_path`
+    # (the path to the sidecar JSON).
     ai_registration = register_serving_endpoints_as_ai_providers(
         include=["databricks-*"],   # FM API endpoints; pass ["*"] for everything
         # default_chat="databricks-claude-3-7-sonnet",
         # default_edit="databricks-claude-3-7-sonnet",
-        scope="memory",  # per-user, in-process — required for multi-user app deployments
+        scope="memory",  # per-user, cross-process — required for multi-user app deployments
     )
     ai_registration["models"]
     return (ai_registration,)
