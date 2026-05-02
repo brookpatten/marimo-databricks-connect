@@ -105,17 +105,34 @@ def _get_app_usage_policy_id() -> str | None:
     ``effective_usage_policy_id`` field that we forward to Spark Connect so
     queries inherit the same policy the app was deployed with.
 
-    Returns ``None`` outside of an app, when the app has no usage policy
-    attached, or when the lookup fails (e.g. the app's SP cannot read itself).
-    The result is cached for the life of the process.
+    Resolution order:
+
+    1. ``DATABRICKS_SERVERLESS_USAGE_POLICY_ID`` env var (manual override).
+    2. ``effective_usage_policy_id`` / ``usage_policy_id`` from
+       ``WorkspaceClient().apps.get(name=$DATABRICKS_APP_NAME)``.
+
+    Returns ``None`` outside of an app or when nothing is attached.  The
+    result (including ``None``) is cached for the life of the process.
+    Lookup failures are logged but never raised, since the unrestricted /
+    workspace-default policy may still let the session succeed.
     """
+    import logging
     import os
+
+    log = logging.getLogger(__name__)
 
     if "app_usage_policy_id" in _cache:
         return _cache["app_usage_policy_id"]
 
+    override = os.environ.get("DATABRICKS_SERVERLESS_USAGE_POLICY_ID")
+    if override:
+        log.info("mdc: using usage_policy_id %s from DATABRICKS_SERVERLESS_USAGE_POLICY_ID", override)
+        _cache["app_usage_policy_id"] = override
+        return override
+
     app_name = os.environ.get("DATABRICKS_APP_NAME")
     if not app_name:
+        log.debug("mdc: DATABRICKS_APP_NAME not set; skipping usage-policy lookup")
         _cache["app_usage_policy_id"] = None
         return None
 
@@ -128,8 +145,18 @@ def _get_app_usage_policy_id() -> str | None:
 
         ws = WorkspaceClient()
         app = ws.apps.get(name=app_name)
-        policy_id = getattr(app, "effective_usage_policy_id", None) or getattr(app, "usage_policy_id", None)
-    except Exception:  # pragma: no cover - best effort
+        effective = getattr(app, "effective_usage_policy_id", None)
+        attached = getattr(app, "usage_policy_id", None)
+        policy_id = effective or attached
+        log.info(
+            "mdc: app %s usage_policy_id=%s effective_usage_policy_id=%s -> using %s",
+            app_name,
+            attached,
+            effective,
+            policy_id,
+        )
+    except Exception as exc:
+        log.warning("mdc: failed to look up usage policy for app %s: %s", app_name, exc)
         policy_id = None
 
     _cache["app_usage_policy_id"] = policy_id
