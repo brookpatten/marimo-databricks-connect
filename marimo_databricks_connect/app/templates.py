@@ -223,7 +223,8 @@ def render_drafts_section(drafts: Iterable[dict]) -> str:
             '<button class="btn secondary" type="submit">Save</button>'
             "</form>"
         )
-        open_btn = f'<a class="btn secondary" href="{html.escape(d.get("open_url") or f"/open/{d['slug']}")}">Open</a>'
+        url = html.escape(d.get("open_url") or "/open/" + d["slug"] + "/")
+        open_btn = f'<a class="btn secondary" href="{url}">Open</a>'
         delete_form = (
             '<form class="inline" method="post" action="/delete-draft" '
             "onsubmit=\"return confirm('Delete this draft from the local cache? "

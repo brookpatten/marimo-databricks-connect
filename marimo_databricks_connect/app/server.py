@@ -195,8 +195,9 @@ def _cache_path(slug: str) -> Optional[Path]:
 
 
 def _slug_for_cache_file(p: Path) -> Optional[str]:
-    """Reverse of ``_cache_path``: given an absolute file in the cache,
-    return its slug (parent dir name) or ``None`` if not under NOTEBOOK_CACHE.
+    """Reverse of ``_cache_path``: given an absolute file in the cache.
+
+    Returns the slug (parent dir name) or ``None`` if not under NOTEBOOK_CACHE.
     """
     try:
         rel = p.resolve().relative_to(NOTEBOOK_CACHE.resolve())
@@ -372,10 +373,10 @@ _MARIMO_SAVE_PATH = "/api/kernel/save"
 
 
 def _push_cache_file_to_workspace(file_path: str, user: Optional[UserIdentity]) -> None:
-    """Best-effort upload: read ``file_path`` and import it back to its
-    tracked workspace path. Logged-and-swallowed on error so save UX in
-    marimo isn't broken by transient API issues — the user can retry from
-    the index page "Save" button.
+    """Best-effort upload: read ``file_path`` and import it back to its tracked workspace path.
+
+    Logged-and-swallowed on error so save UX in marimo isn't broken by transient API issues
+    — the user can retry from the index page "Save" button.
     """
     if user is None or not user.token:
         LOGGER.warning(
