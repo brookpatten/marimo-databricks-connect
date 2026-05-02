@@ -9,12 +9,13 @@ This:
    forwards OpenAI-compatible requests to ``<workspace>/serving-endpoints/*``
    with freshly-minted bearer tokens — so OAuth/CLI/OBO tokens never expire
    mid-session and no token is ever written to ``marimo.toml``.
-3. Patches the user's ``marimo.toml`` so the endpoints appear in marimo's
-   AI model picker / chat / autocomplete UI under a ``databricks/`` prefix.
+3. Patches the user's ``marimo.toml`` (or the project's pyproject.toml's
+   ``[tool.marimo]`` block) so the endpoints appear in marimo's AI model
+   picker / chat / autocomplete UI under a ``databricks/`` prefix.
 
-Marimo loads ``marimo.toml`` at server start, so changes here typically
-require restarting ``marimo edit`` to take effect (the function prints a
-hint to that effect).
+Marimo re-reads its TOML config on every request, so calling this from
+inside a running notebook is fine — just **refresh the marimo browser tab**
+afterwards so the AI panel re-fetches the (now-extended) provider list.
 """
 
 from __future__ import annotations
@@ -62,7 +63,12 @@ def _endpoint_ready(ep: Any) -> bool:
     ready = getattr(state, "ready", None)
     if ready is None:
         return True
-    return str(ready).upper() in {"READY", "STATE_READY"}
+    # ``ready`` is typically an ``EndpointStateReady`` enum, whose ``str()``
+    # is ``"EndpointStateReady.READY"`` — useless for a membership check.
+    # Prefer the enum's ``.value`` / ``.name`` (both are ``"READY"``), and
+    # fall back to ``str()`` for plain-string payloads.
+    token = getattr(ready, "value", None) or getattr(ready, "name", None) or str(ready)
+    return str(token).upper() in {"READY", "STATE_READY"}
 
 
 def list_serving_endpoints(
@@ -112,14 +118,52 @@ def list_serving_endpoints(
     return sorted(out)
 
 
-def _resolve_config_path(scope: str) -> pathlib.Path:
-    """Resolve a marimo.toml path from a scope name or explicit path."""
+def _find_pyproject_toml(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Walk up from ``start`` looking for a ``pyproject.toml``."""
+    p = start.resolve()
+    root = pathlib.Path(p.anchor)
+    while True:
+        cand = p / "pyproject.toml"
+        if cand.exists():
+            return cand
+        if p == root or p.parent == p:
+            return None
+        p = p.parent
+
+
+def _resolve_target(scope: str) -> tuple[pathlib.Path, tuple[str, ...]]:
+    """Resolve where to write AI config.
+
+    Returns ``(path, key_prefix)`` where ``key_prefix`` is the table prefix
+    that the AI keys are nested under inside that file. For a standalone
+    ``marimo.toml`` the prefix is empty (``[ai...]`` lives at the top); for
+    ``pyproject.toml`` it is ``("tool", "marimo")`` so the keys land at
+    ``[tool.marimo.ai...]`` (which is what marimo actually reads — marimo
+    does **not** load a project-level ``marimo.toml``, only the user one and
+    the pyproject ``[tool.marimo]`` block).
+    """
     if scope == "user":
         cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-        return pathlib.Path(cfg) / "marimo" / "marimo.toml"
+        return pathlib.Path(cfg) / "marimo" / "marimo.toml", ()
+    if scope == "pyproject":
+        return pathlib.Path.cwd() / "pyproject.toml", ("tool", "marimo")
     if scope == "project":
-        return pathlib.Path.cwd() / "marimo.toml"
-    return pathlib.Path(scope).expanduser()
+        # Marimo only honours project config under pyproject.toml's
+        # [tool.marimo] table. If a pyproject.toml is reachable, target it;
+        # otherwise fall back to a standalone marimo.toml (preserved for
+        # backwards compatibility, but marimo itself will ignore it).
+        py = _find_pyproject_toml(pathlib.Path.cwd())
+        if py is not None:
+            return py, ("tool", "marimo")
+        return pathlib.Path.cwd() / "marimo.toml", ()
+    p = pathlib.Path(scope).expanduser()
+    prefix: tuple[str, ...] = ("tool", "marimo") if p.name == "pyproject.toml" else ()
+    return p, prefix
+
+
+def _resolve_config_path(scope: str) -> pathlib.Path:
+    """Back-compat shim returning just the path (drops the key prefix)."""
+    return _resolve_target(scope)[0]
 
 
 def _load_doc(path: pathlib.Path) -> Any:
@@ -151,17 +195,23 @@ def _write_marimo_toml(
     default_chat: Optional[str],
     default_edit: Optional[str],
     default_autocomplete: Optional[str],
+    key_prefix: tuple[str, ...] = (),
 ) -> None:
-    """Idempotently merge our AI provider config into ``marimo.toml``."""
+    """Idempotently merge our AI provider config into a TOML config file.
+
+    ``key_prefix`` is prepended to every key path so the same writer works
+    for both standalone ``marimo.toml`` (prefix ``()``) and pyproject's
+    ``[tool.marimo]`` block (prefix ``("tool", "marimo")``).
+    """
     import tomlkit
 
     doc = _load_doc(path)
 
-    prov = _ensure_table(doc, "ai", "custom_providers", provider_name)
+    prov = _ensure_table(doc, *key_prefix, "ai", "custom_providers", provider_name)
     prov["base_url"] = base_url
     prov["api_key"] = api_key
 
-    models = _ensure_table(doc, "ai", "models")
+    models = _ensure_table(doc, *key_prefix, "ai", "models")
     existing = list(models.get("custom_models", []) or [])
     merged = sorted(set(existing) | set(model_ids))
     models["custom_models"] = merged
@@ -174,6 +224,143 @@ def _write_marimo_toml(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(tomlkit.dumps(doc))
+
+
+# ---- runtime (in-memory) AI config registry ------------------------------ #
+#
+# When marimo is hosted as a Databricks App, multiple end users share a single
+# server process and a single on-disk marimo config. Writing AI providers to
+# that shared config would either (a) leak one user's discovered endpoints to
+# everyone else or (b) require coordinated writes / restarts. Instead we keep
+# the config in-process and merge it into marimo's view of the user config on
+# the fly, keyed by the OBO user identity attached to each request.
+#
+# Layout: ``{user_key_or_'*': {"providers": {provider_name: {...}},
+#                              "models": {"custom_models": [...],
+#                                         "chat_model": ..., ...}}}``
+# ``"*"`` is the fallback bucket used when no OBO user is in scope (local
+# dev) or when no per-user entry exists.
+
+_RUNTIME_AI_REGISTRY: dict[str, dict[str, Any]] = {}
+_RUNTIME_PATCH_INSTALLED = False
+
+
+def _runtime_user_key() -> str:
+    """Return the per-user registry key for the current request, or ``"*"``."""
+    try:
+        from . import _obo
+
+        return _obo.get_user_key() or "*"
+    except Exception:  # noqa: BLE001 -- never let config lookup fail open
+        return "*"
+
+
+def _merge_runtime_into_config(base: Any) -> Any:
+    """Merge the runtime AI registry into a loaded marimo user config dict.
+
+    Operates on plain dicts (returned by ``UserConfigManager._load_config``)
+    rather than tomlkit documents, so we can treat keys as ordinary mapping
+    entries. Per-user entries take priority over the shared ``"*"`` bucket;
+    on-disk config is preserved unless the runtime registry explicitly sets
+    a key.
+    """
+    star = _RUNTIME_AI_REGISTRY.get("*") or {}
+    user = _RUNTIME_AI_REGISTRY.get(_runtime_user_key()) or {}
+    if not star and not user:
+        return base
+
+    merged = dict(base) if isinstance(base, dict) else {}
+    ai = dict(merged.get("ai") or {})
+
+    cps = dict(ai.get("custom_providers") or {})
+    for src in (star, user):
+        for name, cfg in (src.get("providers") or {}).items():
+            cps[name] = dict(cfg)
+    ai["custom_providers"] = cps
+
+    models = dict(ai.get("models") or {})
+    existing = list(models.get("custom_models") or [])
+    extra: list[str] = []
+    for src in (star, user):
+        extra.extend((src.get("models") or {}).get("custom_models") or [])
+    models["custom_models"] = sorted(set(existing) | set(extra))
+    # User-level defaults beat the star-level defaults beat whatever's on disk.
+    for src in (star, user):
+        for k in ("chat_model", "edit_model", "autocomplete_model"):
+            v = (src.get("models") or {}).get(k)
+            if v:
+                models[k] = v
+    ai["models"] = models
+
+    merged["ai"] = ai
+    return merged
+
+
+def _install_runtime_config_patch() -> None:
+    """Monkeypatch :meth:`marimo._config.manager.UserConfigManager._load_config`.
+
+    Idempotent. After the patch, every call to marimo's user-config loader
+    returns the on-disk config merged with our in-process AI registry,
+    keyed by the current OBO user (via ``_obo.get_user_key()``).
+
+    ``UserConfigManager._load_config`` is invoked by every
+    ``MarimoConfigManager.get_config()`` call, which in turn powers the
+    AI endpoint handlers — so providers registered at runtime show up
+    on the next browser refresh without restarting the server.
+    """
+    global _RUNTIME_PATCH_INSTALLED
+    if _RUNTIME_PATCH_INSTALLED:
+        return
+    try:
+        from marimo._config.manager import UserConfigManager
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("mdc: could not patch marimo UserConfigManager: %s", exc)
+        return
+
+    original = UserConfigManager._load_config
+
+    def patched(self):  # type: ignore[no-untyped-def]
+        base = original(self)
+        try:
+            return _merge_runtime_into_config(base)
+        except Exception:  # noqa: BLE001
+            LOG.exception("mdc: failed to merge runtime AI config; falling back to disk-only")
+            return base
+
+    patched._mdc_runtime_patched = True  # type: ignore[attr-defined]
+    UserConfigManager._load_config = patched  # type: ignore[method-assign]
+    _RUNTIME_PATCH_INSTALLED = True
+    LOG.info("mdc: installed runtime AI-config patch on marimo UserConfigManager")
+
+
+def _store_runtime_ai_config(
+    *,
+    user_key: str,
+    provider_name: str,
+    base_url: str,
+    api_key: str,
+    model_ids: list[str],
+    default_chat: Optional[str],
+    default_edit: Optional[str],
+    default_autocomplete: Optional[str],
+) -> None:
+    """Update the in-process registry for ``user_key`` with the given provider."""
+    bucket = _RUNTIME_AI_REGISTRY.setdefault(user_key, {"providers": {}, "models": {}})
+    bucket["providers"][provider_name] = {"base_url": base_url, "api_key": api_key}
+    models = bucket.setdefault("models", {})
+    existing = list(models.get("custom_models") or [])
+    models["custom_models"] = sorted(set(existing) | set(model_ids))
+    if default_chat:
+        models["chat_model"] = default_chat
+    if default_edit:
+        models["edit_model"] = default_edit
+    if default_autocomplete:
+        models["autocomplete_model"] = default_autocomplete
+
+
+def _reset_runtime_registry_for_tests() -> None:
+    """Test helper: clear the in-memory registry. Does not undo the patch."""
+    _RUNTIME_AI_REGISTRY.clear()
 
 
 def register_serving_endpoints_as_ai_providers(
@@ -224,8 +411,31 @@ def register_serving_endpoints_as_ai_providers(
         default_edit: bare endpoint name to set as marimo's default edit model.
         default_autocomplete: bare endpoint name to set as marimo's default
             autocomplete model.
-        scope: where to write ``marimo.toml`` — ``"project"`` (CWD),
-            ``"user"`` (``~/.config/marimo/marimo.toml``), or an explicit path.
+        scope: where to put the AI config. One of:
+
+            * ``"memory"`` — do **not** touch any file. Store the providers
+              in an in-process registry keyed by the current OBO user (via
+              ``X-Forwarded-User`` / ``X-Forwarded-Email``) and patch
+              marimo's user-config loader to merge that registry into the
+              config it returns. Use this when running inside the
+              :mod:`marimo_databricks_connect.app` Databricks App, where a
+              single server process is shared across multiple end users and
+              writing to disk would either leak one user's endpoints to
+              everyone or require coordinated restarts.
+            * ``"user"`` — ``~/.config/marimo/marimo.toml`` (or
+              ``$XDG_CONFIG_HOME``). Always read by marimo; safest pick
+              for single-user local development.
+            * ``"project"`` (default) — the nearest ``pyproject.toml`` in
+              CWD or its parents (writes the ``[tool.marimo.ai...]`` block).
+              Falls back to ``./marimo.toml`` when no pyproject.toml is
+              reachable, but **note** marimo does not load a project-level
+              ``marimo.toml`` — only the user one and pyproject's
+              ``[tool.marimo]`` table.
+            * ``"pyproject"`` — force ``./pyproject.toml``
+              (creating the file if needed).
+            * Any other string is treated as an explicit path. If the path
+              ends in ``pyproject.toml`` we nest under ``[tool.marimo]``
+              automatically.
         write: if False, don't touch ``marimo.toml``; just start the proxy and
             return what *would* be written.
         proxy_port: port for the localhost proxy. ``0`` picks a free port.
@@ -286,8 +496,33 @@ def register_serving_endpoints_as_ai_providers(
         return name if "/" in name else f"{provider_name}/{name}"
 
     cfg_path: Optional[pathlib.Path] = None
-    if write:
-        cfg_path = _resolve_config_path(scope)
+    if write and scope == "memory":
+        # In-process registry: works for multi-user app deployments where
+        # writing to a shared marimo.toml would either leak config across
+        # users or require restarting the server. The patch installed below
+        # makes marimo's config loader merge this registry into the user
+        # config it returns to the AI panel.
+        _install_runtime_config_patch()
+        _store_runtime_ai_config(
+            user_key=_runtime_user_key(),
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=_PROXY_API_KEY_SENTINEL,
+            model_ids=model_ids,
+            default_chat=_qualify(default_chat),
+            default_edit=_qualify(default_edit),
+            default_autocomplete=_qualify(default_autocomplete),
+        )
+        msg = (
+            f"mdc: registered {len(model_ids)} Databricks model(s) in-process for "
+            f"user={_runtime_user_key()!r}. Refresh the marimo browser tab so the "
+            "AI panel picks up the new providers."
+        )
+        if verbose:
+            print(msg)
+        LOG.info(msg)
+    elif write:
+        cfg_path, key_prefix = _resolve_target(scope)
         _write_marimo_toml(
             cfg_path,
             provider_name=provider_name,
@@ -297,12 +532,30 @@ def register_serving_endpoints_as_ai_providers(
             default_chat=_qualify(default_chat),
             default_edit=_qualify(default_edit),
             default_autocomplete=_qualify(default_autocomplete),
+            key_prefix=key_prefix,
         )
-        LOG.info(
-            "mdc: wrote %d Databricks model(s) to %s; restart marimo to pick up changes.",
-            len(model_ids),
-            cfg_path,
+        # Marimo re-reads the user marimo.toml and the project pyproject.toml
+        # on every config request, so the new providers will appear after
+        # the next refresh of the marimo UI (the AI panel only fetches the
+        # provider list when it opens). When called from inside a notebook,
+        # tell the user to refresh the browser tab.
+        msg = (
+            f"mdc: wrote {len(model_ids)} Databricks model(s) to {cfg_path}. "
+            "Refresh the marimo browser tab so the AI panel picks up the new providers."
         )
+        if verbose:
+            print(msg)
+        LOG.info(msg)
+        if cfg_path.name == "marimo.toml" and key_prefix == () and scope in ("project",):
+            warn = (
+                "mdc: wrote a standalone marimo.toml, but marimo only reads project "
+                "config from pyproject.toml's [tool.marimo] block. Use scope='user' "
+                "or scope='pyproject' (or run from a directory containing a "
+                "pyproject.toml) so the new providers actually show up in the UI."
+            )
+            if verbose:
+                print(warn)
+            LOG.warning(warn)
 
     return {
         "provider": provider_name,

@@ -296,6 +296,8 @@ def _imports():
         workspace,         # fsspec FS rooted at the Workspace tree (/Users, /Repos, ...)
         external_location, # fn(name_or_uri) -> fsspec FS for a UC external location
         ui,                # marimo UI helpers (selectors, etc.)
+        # AI · wires Databricks Model Serving into marimo's chat/edit/autocomplete
+        register_serving_endpoints_as_ai_providers,
         # Catalog / Data-sources panel filtering
         include_catalogs, exclude_catalogs, show_all_catalogs, prefetch,
         # Widgets
@@ -312,12 +314,51 @@ def _imports():
         dbutils, exclude_catalogs, external_location,
         external_location_widget, genie_widget, include_catalogs,
         job_widget, pipeline_widget, pipelines_widget, prefetch,
-        principal_widget, schema_widget, secret_scope_widget,
+        principal_widget, register_serving_endpoints_as_ai_providers,
+        schema_widget, secret_scope_widget,
         serving_endpoint_widget, show_all_catalogs, spark, table_widget,
         ui, unity_catalog_widget, vector_index_widget,
         vector_search_endpoint_widget, warehouse_widget, workflows_widget,
         workspace, workspace_widget,
     )
+
+
+@app.cell(hide_code=True)
+def _ai_intro(mo):
+    mo.md(
+        """
+        ## \U0001f916 AI features (chat / edit / autocomplete)
+
+        ``register_serving_endpoints_as_ai_providers`` discovers the
+        Databricks Model Serving endpoints **you** can reach (Foundation
+        Model API ones plus any custom endpoints), starts a localhost
+        auth-refreshing proxy, and wires them into marimo's AI panel under
+        a ``databricks/`` prefix.
+
+        ``scope="memory"`` keeps the registration in-process and keys it
+        by your OBO identity, so each user of this app sees only their own
+        endpoints — nothing is written to the shared marimo config on
+        disk. **Refresh this browser tab after the cell runs** so marimo's
+        AI panel re-fetches the provider list.
+        """
+    )
+    return
+
+
+@app.cell
+def _ai_register(register_serving_endpoints_as_ai_providers):
+    # One call: enumerate Foundation Model + custom serving endpoints,
+    # start the auth-refreshing proxy, and register the providers in
+    # an in-process registry keyed by your OBO user identity.
+    # Returns a dict with `endpoints`, `models`, `base_url`.
+    ai_registration = register_serving_endpoints_as_ai_providers(
+        include=["databricks-*"],   # FM API endpoints; pass ["*"] for everything
+        # default_chat="databricks-claude-3-7-sonnet",
+        # default_edit="databricks-claude-3-7-sonnet",
+        scope="memory",  # per-user, in-process — required for multi-user app deployments
+    )
+    ai_registration["models"]
+    return (ai_registration,)
 
 
 @app.cell(hide_code=True)
