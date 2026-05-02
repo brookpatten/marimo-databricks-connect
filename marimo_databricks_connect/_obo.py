@@ -24,28 +24,45 @@ from typing import Optional
 
 _user_token: ContextVar[Optional[str]] = ContextVar("mdc_obo_token", default=None)
 _user_host: ContextVar[Optional[str]] = ContextVar("mdc_obo_host", default=None)
+_user_key_var: ContextVar[Optional[str]] = ContextVar("mdc_obo_user_key", default=None)
 
 
-def set_credentials(host: Optional[str], token: Optional[str]) -> object:
-    """Push (host, token) into the current async/thread context.
+def set_credentials(
+    host: Optional[str],
+    token: Optional[str],
+    user_key: Optional[str] = None,
+) -> object:
+    """Push (host, token, user_key) into the current async/thread context.
+
+    ``user_key`` is a stable per-user identifier (e.g. email) used by code
+    that wants to keep per-user in-process state — see :mod:`._ai` for the
+    runtime AI-provider registry. It is purely advisory; auth itself only
+    needs ``host`` + ``token``.
 
     Returns an opaque token usable with :func:`reset_credentials`.
     """
     t1 = _user_token.set(token)
     t2 = _user_host.set(host)
-    return (t1, t2)
+    t3 = _user_key_var.set(user_key)
+    return (t1, t2, t3)
 
 
 def reset_credentials(state: object) -> None:
     """Restore the credentials state returned by :func:`set_credentials`."""
-    t1, t2 = state  # type: ignore[misc]
+    t1, t2, t3 = state  # type: ignore[misc]
     _user_token.reset(t1)
     _user_host.reset(t2)
+    _user_key_var.reset(t3)
 
 
 def get_credentials() -> tuple[Optional[str], Optional[str]]:
     """Return ``(host, token)`` for the current request, or ``(None, None)``."""
     return _user_host.get(), _user_token.get()
+
+
+def get_user_key() -> Optional[str]:
+    """Return the current request's user identifier (e.g. email), if known."""
+    return _user_key_var.get()
 
 
 def is_obo_active() -> bool:

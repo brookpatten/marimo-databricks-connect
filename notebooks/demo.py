@@ -29,7 +29,7 @@ def _():
 
 @app.cell
 def _(register_serving_endpoints_as_ai_providers):
-    register_serving_endpoints_as_ai_providers(include=["databricks-claude-sonnet-4-5"])
+    register_serving_endpoints_as_ai_providers()
     return
 
 

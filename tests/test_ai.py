@@ -81,6 +81,41 @@ def test_list_excludes_take_priority():
     assert names == ["databricks-a"]
 
 
+def test_endpoint_ready_handles_sdk_enum():
+    """Regression: ``state.ready`` is an EndpointStateReady enum, not a str.
+
+    ``str(EndpointStateReady.READY)`` is ``"EndpointStateReady.READY"``, so
+    a naive ``str(ready).upper() in {"READY"}`` membership check would mark
+    every real endpoint as not ready. We must use ``.value`` / ``.name``.
+    """
+    from databricks.sdk.service.serving import EndpointStateReady
+
+    ready_ep = SimpleNamespace(state=SimpleNamespace(ready=EndpointStateReady.READY))
+    not_ready_ep = SimpleNamespace(state=SimpleNamespace(ready=EndpointStateReady.NOT_READY))
+    assert _ai._endpoint_ready(ready_ep) is True
+    assert _ai._endpoint_ready(not_ready_ep) is False
+    # And the list path actually keeps the ready one.
+    ws = MagicMock()
+    ws.serving_endpoints.list.return_value = [
+        SimpleNamespace(
+            name="databricks-claude",
+            task="llm/v1/chat",
+            state=SimpleNamespace(ready=EndpointStateReady.READY),
+            config=None,
+            pending_config=None,
+        ),
+        SimpleNamespace(
+            name="databricks-not-ready",
+            task="llm/v1/chat",
+            state=SimpleNamespace(ready=EndpointStateReady.NOT_READY),
+            config=None,
+            pending_config=None,
+        ),
+    ]
+    names = _ai.list_serving_endpoints(workspace_client=ws, include=["databricks-*"])
+    assert names == ["databricks-claude"]
+
+
 def test_list_empty_tasks_disables_task_filter():
     ws = _fake_ws([_ep("custom", task=None)])
     names = _ai.list_serving_endpoints(workspace_client=ws, include=["*"], tasks=())
@@ -185,6 +220,127 @@ def test_register_dry_run_does_not_write(tmp_path, monkeypatch):
         )
         assert result["config_path"] is None
         assert not (tmp_path / "marimo.toml").exists()
+    finally:
+        _ai_proxy._reset_proxy_for_tests()
+
+
+def test_register_memory_scope_is_per_user_and_patches_marimo(monkeypatch):
+    """scope='memory' keeps providers in-process, keyed by OBO user identity.
+
+    The patched ``UserConfigManager._load_config`` must merge each user's
+    runtime registry into the config it returns, leaving on-disk config
+    untouched and other users' entries hidden.
+    """
+    from marimo._config.manager import UserConfigManager
+
+    from marimo_databricks_connect import _ai as ai_mod
+    from marimo_databricks_connect import _obo
+
+    # Reset registry between runs; the monkeypatch on _load_config is
+    # idempotent so we don't bother undoing it.
+    ai_mod._reset_runtime_registry_for_tests()
+    _ai_proxy._reset_proxy_for_tests()
+
+    try:
+        # Pretend we're inside an OBO request for alice@example.com.
+        state = _obo.set_credentials(
+            host="https://example.cloud.databricks.com",
+            token="alice-token",
+            user_key="alice@example.com",
+        )
+        try:
+            ws = _fake_ws([_ep("databricks-claude", task="llm/v1/chat")])
+            result = ai_mod.register_serving_endpoints_as_ai_providers(
+                workspace_client=ws,
+                include=["databricks-*"],
+                scope="memory",
+                verbose=False,
+            )
+            assert result["config_path"] is None
+            assert result["models"] == ["databricks/databricks-claude"]
+
+            cfg = UserConfigManager().get_config(hide_secrets=False)
+            assert (
+                cfg["ai"]["custom_providers"]["databricks"]["api_key"]
+                == ai_mod._PROXY_API_KEY_SENTINEL
+            )
+            assert "databricks/databricks-claude" in cfg["ai"]["models"]["custom_models"]
+            alice_base_url = cfg["ai"]["custom_providers"]["databricks"]["base_url"]
+            assert alice_base_url == result["base_url"]
+        finally:
+            _obo.reset_credentials(state)
+
+        # Outside any OBO request: alice's entry must NOT leak to '*'.
+        cfg = UserConfigManager().get_config(hide_secrets=False)
+        assert "databricks" not in (cfg.get("ai", {}).get("custom_providers") or {})
+        assert "databricks/databricks-claude" not in (
+            cfg.get("ai", {}).get("models", {}).get("custom_models") or []
+        )
+
+        # A different user (bob) starts with no providers — alice's bucket
+        # must not be visible to him either.
+        state = _obo.set_credentials(
+            host="https://example.cloud.databricks.com",
+            token="bob-token",
+            user_key="bob@example.com",
+        )
+        try:
+            cfg = UserConfigManager().get_config(hide_secrets=False)
+            assert "databricks" not in (cfg.get("ai", {}).get("custom_providers") or {})
+        finally:
+            _obo.reset_credentials(state)
+    finally:
+        ai_mod._reset_runtime_registry_for_tests()
+        _ai_proxy._reset_proxy_for_tests()
+
+
+def test_register_writes_pyproject_when_present(tmp_path, monkeypatch):
+    """With scope='project', a sibling pyproject.toml gets [tool.marimo.ai...] keys.
+
+    Marimo doesn't read a project-level marimo.toml, so we must target
+    pyproject.toml when one is reachable.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    _ai_proxy._reset_proxy_for_tests()
+    try:
+        ws = _fake_ws([_ep("databricks-claude", task="llm/v1/chat")])
+        result = _ai.register_serving_endpoints_as_ai_providers(
+            workspace_client=ws,
+            include=["databricks-*"],
+            scope="project",
+            verbose=False,
+        )
+        assert result["config_path"] == str(tmp_path / "pyproject.toml")
+        assert not (tmp_path / "marimo.toml").exists()
+        doc = tomlkit.parse((tmp_path / "pyproject.toml").read_text())
+        assert doc["project"]["name"] == "demo"
+        prov = doc["tool"]["marimo"]["ai"]["custom_providers"]["databricks"]
+        assert prov["api_key"] == _ai._PROXY_API_KEY_SENTINEL
+        assert list(doc["tool"]["marimo"]["ai"]["models"]["custom_models"]) == [
+            "databricks/databricks-claude"
+        ]
+    finally:
+        _ai_proxy._reset_proxy_for_tests()
+
+
+def test_register_user_scope_writes_to_xdg(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _ai_proxy._reset_proxy_for_tests()
+    try:
+        ws = _fake_ws([_ep("databricks-claude", task="llm/v1/chat")])
+        result = _ai.register_serving_endpoints_as_ai_providers(
+            workspace_client=ws,
+            include=["databricks-*"],
+            scope="user",
+            verbose=False,
+        )
+        cfg = tmp_path / "marimo" / "marimo.toml"
+        assert result["config_path"] == str(cfg)
+        assert cfg.exists()
+        doc = tomlkit.parse(cfg.read_text())
+        assert "tool" not in doc
+        assert doc["ai"]["custom_providers"]["databricks"]["api_key"] == _ai._PROXY_API_KEY_SENTINEL
     finally:
         _ai_proxy._reset_proxy_for_tests()
 
