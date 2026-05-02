@@ -91,10 +91,12 @@ def test_edit_exports_notebook_and_redirects(client, tmp_path, monkeypatch):
         )
     assert r.status_code == 303
     assert r.headers["location"].startswith("/m/")
-    # File was materialised on disk for marimo to serve.
-    files = list(tmp_path.glob("*.py"))
+    # File was materialised on disk for marimo to serve, in a per-slug dir.
+    files = list(tmp_path.rglob("*.py"))
     assert len(files) == 1
     assert files[0].read_bytes() == body
+    # Basename matches the workspace path leaf so marimo's UI shows it.
+    assert files[0].name == "nb.py"
 
 
 def test_edit_rejects_relative_path(client):
@@ -140,8 +142,8 @@ def test_new_notebook_local_only(client, tmp_path, monkeypatch):
     assert r.status_code == 303
     assert r.headers["location"].startswith("/m/untitled-")
     # Notebook + sidecar metadata written, no import_ call to workspace.
-    pys = list(tmp_path.glob("*.py"))
-    metas = list(tmp_path.glob("*.meta.json"))
+    pys = list(tmp_path.rglob("*.py"))
+    metas = list(tmp_path.rglob("*.meta.json"))
     assert len(pys) == 1 and len(metas) == 1
     assert "@app.cell" in pys[0].read_text()
     fake.workspace.import_.assert_not_called()
@@ -164,7 +166,7 @@ def test_new_notebook_imports_to_workspace(client, tmp_path, monkeypatch):
     assert kwargs["overwrite"] is True
     # Sidecar tracks the workspace target.
     import json
-    meta_files = list(tmp_path.glob("*.meta.json"))
+    meta_files = list(tmp_path.rglob("*.meta.json"))
     assert len(meta_files) == 1
     meta = json.loads(meta_files[0].read_text())
     assert meta["workspace_path"] == "/Users/alice@example.com/marimo/x.py"
@@ -185,9 +187,17 @@ def test_save_uses_tracked_workspace_path(client, tmp_path, monkeypatch):
     import json
     monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
     slug = "my_draft"
-    (tmp_path / f"{slug}.py").write_text("import marimo as mo\n# edits\n")
-    (tmp_path / f"{slug}.meta.json").write_text(
-        json.dumps({"workspace_path": "/Users/me/marimo/draft.py", "last_uploaded_mtime": 0})
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "draft.py").write_text("import marimo as mo\n# edits\n")
+    (d / ".meta.json").write_text(
+        json.dumps(
+            {
+                "workspace_path": "/Users/me/marimo/draft.py",
+                "filename": "draft.py",
+                "last_uploaded_mtime": 0,
+            }
+        )
     )
     fake = MagicMock()
     with patch("databricks.sdk.WorkspaceClient", return_value=fake):
@@ -204,7 +214,7 @@ def test_save_uses_tracked_workspace_path(client, tmp_path, monkeypatch):
     # base64-decoded content matches the file on disk.
     assert base64.b64decode(kwargs["content"]) == b"import marimo as mo\n# edits\n"
     # Meta updated with new mtime.
-    meta = json.loads((tmp_path / f"{slug}.meta.json").read_text())
+    meta = json.loads((d / ".meta.json").read_text())
     assert meta["last_uploaded_mtime"] > 0
 
 
@@ -212,8 +222,12 @@ def test_save_as_retargets_workspace_path(client, tmp_path, monkeypatch):
     import json
     monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
     slug = "draft2"
-    (tmp_path / f"{slug}.py").write_text("x = 1\n")
-    (tmp_path / f"{slug}.meta.json").write_text(json.dumps({"workspace_path": "/old/path.py"}))
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "draft2.py").write_text("x = 1\n")
+    (d / ".meta.json").write_text(
+        json.dumps({"workspace_path": "/old/path.py", "filename": "draft2.py"})
+    )
     fake = MagicMock()
     with patch("databricks.sdk.WorkspaceClient", return_value=fake):
         r = client.post(
@@ -224,14 +238,16 @@ def test_save_as_retargets_workspace_path(client, tmp_path, monkeypatch):
         )
     assert r.status_code == 303
     assert fake.workspace.import_.call_args.kwargs["path"] == "/new/path.py"
-    meta = json.loads((tmp_path / f"{slug}.meta.json").read_text())
+    meta = json.loads((d / ".meta.json").read_text())
     assert meta["workspace_path"] == "/new/path.py"
 
 
 def test_save_without_target_returns_400(client, tmp_path, monkeypatch):
     monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
     slug = "orphan"
-    (tmp_path / f"{slug}.py").write_text("x = 1\n")
+    d = tmp_path / slug
+    d.mkdir()
+    (d / "orphan.py").write_text("x = 1\n")
     # No meta sidecar -> no workspace_path tracked.
     r = client.post(
         "/save",
@@ -245,8 +261,12 @@ def test_index_renders_drafts_section(client, tmp_path, monkeypatch):
     """Index page should show a Drafts row for each cached notebook."""
     import json
     monkeypatch.setattr("marimo_databricks_connect.app.server.NOTEBOOK_CACHE", tmp_path)
-    (tmp_path / "draftA.py").write_text("# a\n")
-    (tmp_path / "draftA.meta.json").write_text(json.dumps({"workspace_path": "/Users/me/a.py"}))
+    d = tmp_path / "draftA"
+    d.mkdir()
+    (d / "a.py").write_text("# a\n")
+    (d / ".meta.json").write_text(
+        json.dumps({"workspace_path": "/Users/me/a.py", "filename": "a.py"})
+    )
     fake = MagicMock()
     fake.workspace.list.return_value = []
     with patch("databricks.sdk.WorkspaceClient", return_value=fake):
@@ -255,3 +275,60 @@ def test_index_renders_drafts_section(client, tmp_path, monkeypatch):
     assert "Drafts" in r.text
     assert "draftA" in r.text
     assert "/Users/me/a.py" in r.text
+
+
+def test_workspace_save_middleware_pushes_to_workspace(tmp_path, monkeypatch):
+    """A successful POST to ``.../api/kernel/save`` re-uploads to workspace."""
+    import json
+    from marimo_databricks_connect.app import server as server_mod
+    from marimo_databricks_connect.app.auth import UserIdentity
+
+    monkeypatch.setattr(server_mod, "NOTEBOOK_CACHE", tmp_path)
+    slug = "saveme"
+    d = tmp_path / slug
+    d.mkdir()
+    cache_file = d / "saveme.py"
+    cache_file.write_text("# fresh edits from marimo\n")
+    (d / ".meta.json").write_text(
+        json.dumps(
+            {"workspace_path": "/Users/me/saveme.py", "filename": "saveme.py"}
+        )
+    )
+
+    # Build a fake inner ASGI app that returns 200 (mimicking marimo's save).
+    async def inner_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    mw = server_mod.workspace_save_middleware_factory(inner_app)
+
+    user = UserIdentity(user="me", email="me@x", token="tok", host="https://x")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/kernel/save",
+        "headers": [],
+        "state": {"user": user},
+        "marimo_app_file": str(cache_file),
+    }
+
+    fake = MagicMock()
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    import asyncio
+    with patch("databricks.sdk.WorkspaceClient", return_value=fake):
+        asyncio.run(mw(scope, receive, send))
+
+    fake.workspace.import_.assert_called_once()
+    kwargs = fake.workspace.import_.call_args.kwargs
+    assert kwargs["path"] == "/Users/me/saveme.py"
+    assert base64.b64decode(kwargs["content"]) == b"# fresh edits from marimo\n"
+    # Sidecar updated with the new upload time.
+    meta = json.loads((d / ".meta.json").read_text())
+    assert meta["last_uploaded_mtime"] > 0

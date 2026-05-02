@@ -27,10 +27,11 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.requests import HTTPConnection
 
 from .. import _obo
 from .._workspace_fs import _is_dir_object, _object_type
-from .auth import OboMiddleware, UserIdentity, get_request_user, obo_middleware_factory
+from .auth import OboMiddleware, UserIdentity, get_request_user, identity_from_request, obo_middleware_factory
 from .templates import (
     render_drafts_section,
     render_error,
@@ -123,32 +124,104 @@ _SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 def _slug_for(path: str) -> str:
     """Stable filesystem-safe id for a workspace path.
 
-    The slug becomes the URL segment under ``/m/<slug>`` and the cache file
-    name (``<slug>.py``). It MUST NOT contain a ``.`` — marimo's
-    ``DynamicDirectoryMiddleware`` skips its ``<slug>.py`` lookup when the
-    URL segment already has a suffix (``Path(slug).suffix``), which would
-    cause every notebook open to return 404.
+    The slug names the per-notebook cache *directory* under
+    ``NOTEBOOK_CACHE/<slug>/<basename>.py`` and becomes the first URL
+    segment under ``/m/<slug>/<basename>``. It MUST NOT contain a ``.``
+    — marimo's ``DynamicDirectoryMiddleware`` skips its ``<slug>.py``
+    lookup when the URL segment already has a suffix.
     """
     s = _SLUG_RE.sub("_", path.strip("/")).strip("_")
     return s or "notebook"
 
 
-# ---- per-slug metadata sidecar -------------------------------------------
-#
-# Every cached notebook gets a ``<slug>.meta.json`` sibling that records
-# where it came from / where it should be saved back to. We deliberately
-# avoid a single shared index file so concurrent writes from different
-# request workers don't need a lock.
+def _basename_for(ws_path: str) -> str:
+    """Pick a filesystem-safe ``.py`` basename for a workspace path.
 
-_META_SUFFIX = ".meta.json"
+    Databricks notebook paths have no extension; plain workspace files keep
+    theirs. Always normalise to ``<name>.py`` so marimo's UI shows it as a
+    Python notebook and the dynamic-directory router can find it.
+    """
+    leaf = (ws_path.rsplit("/", 1)[-1] or "notebook").strip()
+    leaf = _SLUG_RE.sub("_", leaf).strip("_") or "notebook"
+    if leaf.endswith("_py"):
+        leaf = leaf[: -len("_py")] + ".py"
+    if not leaf.endswith(".py"):
+        leaf = leaf + ".py"
+    if leaf.startswith("_"):
+        leaf = "nb" + leaf  # DynamicDirectoryMiddleware skips ``_*.py``
+    return leaf
+
+
+# ---- per-slug cache layout / metadata sidecar ----------------------------
+#
+# Each cached notebook lives in its own directory:
+#
+#     <NOTEBOOK_CACHE>/<slug>/<basename>.py
+#     <NOTEBOOK_CACHE>/<slug>/.meta.json
+#
+# The directory wrapper lets us pick a *human-friendly* basename (matching
+# the workspace path's leaf, e.g. ``demo.py``) so marimo's UI shows the
+# real notebook name instead of the URL slug, while still keeping the slug
+# unique across the cache. The dynamic-directory mount then routes
+# ``/m/<slug>/<basename_no_ext>`` to the file.
+
+_META_NAME = ".meta.json"
+
+
+def _cache_dir(slug: str) -> Path:
+    return NOTEBOOK_CACHE / slug
 
 
 def _meta_path(slug: str) -> Path:
-    return NOTEBOOK_CACHE / f"{slug}{_META_SUFFIX}"
+    return _cache_dir(slug) / _META_NAME
 
 
-def _cache_path(slug: str) -> Path:
-    return NOTEBOOK_CACHE / f"{slug}.py"
+def _cache_path(slug: str) -> Optional[Path]:
+    """Resolve the on-disk ``.py`` file for ``slug``, or ``None`` if absent."""
+    d = _cache_dir(slug)
+    if not d.is_dir():
+        return None
+    meta = _load_meta(slug)
+    fname = meta.get("filename")
+    if fname:
+        candidate = d / fname
+        if candidate.exists():
+            return candidate
+    # Fall back to the first non-underscore .py file in the directory.
+    for p in sorted(d.glob("*.py")):
+        if not p.name.startswith("_"):
+            return p
+    return None
+
+
+def _slug_for_cache_file(p: Path) -> Optional[str]:
+    """Reverse of ``_cache_path``: given an absolute file in the cache.
+
+    Returns the slug (parent dir name) or ``None`` if not under NOTEBOOK_CACHE.
+    """
+    try:
+        rel = p.resolve().relative_to(NOTEBOOK_CACHE.resolve())
+    except (ValueError, OSError):
+        return None
+    parts = rel.parts
+    if not parts:
+        return None
+    return parts[0]
+
+
+def _open_url(slug: str, filename: Optional[str] = None) -> str:
+    """Build the marimo edit URL for a slug.
+
+    Falls back to a redirect-only ``/open/<slug>`` route when we don't yet
+    know the basename (e.g. legacy callers that only have the slug).
+    """
+    if not filename:
+        cache = _cache_path(slug)
+        filename = cache.name if cache else None
+    if not filename:
+        return f"/open/{slug}"
+    stem = filename[:-3] if filename.endswith(".py") else filename
+    return f"{MARIMO_MOUNT}/{slug}/{stem}"
 
 
 def _load_meta(slug: str) -> dict:
@@ -163,23 +236,32 @@ def _load_meta(slug: str) -> dict:
 
 
 def _save_meta(slug: str, meta: dict) -> None:
+    d = _cache_dir(slug)
+    d.mkdir(parents=True, exist_ok=True)
     _meta_path(slug).write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _list_drafts() -> list[dict]:
     """Return cached notebooks (newest first) with save state for the index page."""
     out: list[dict] = []
-    for p in NOTEBOOK_CACHE.glob("*.py"):
-        slug = p.stem
+    for d in NOTEBOOK_CACHE.iterdir():
+        if not d.is_dir():
+            continue
+        slug = d.name
+        cache = _cache_path(slug)
+        if cache is None:
+            continue
         meta = _load_meta(slug)
         try:
-            mtime = p.stat().st_mtime
+            mtime = cache.stat().st_mtime
         except OSError:
             continue
         uploaded = float(meta.get("last_uploaded_mtime") or 0.0)
         out.append(
             {
                 "slug": slug,
+                "filename": cache.name,
+                "open_url": _open_url(slug, cache.name),
                 "workspace_path": meta.get("workspace_path"),
                 "mtime": mtime,
                 "last_uploaded_mtime": uploaded,
@@ -224,7 +306,7 @@ def _save_slug_to_workspace(user: UserIdentity, slug: str) -> str:
     Returns the workspace path written. Raises ``HTTPException`` on usage errors.
     """
     cache = _cache_path(slug)
-    if not cache.exists():
+    if cache is None:
         raise HTTPException(404, f"No cached notebook for slug {slug!r}")
     meta = _load_meta(slug)
     ws_path = meta.get("workspace_path")
@@ -258,17 +340,123 @@ def _export_notebook(user: UserIdentity, ws_path: str) -> Path:
         raise HTTPException(500, f"Workspace export returned no content for {ws_path!r}")
     raw = base64.b64decode(content_b64)
     slug = _slug_for(ws_path)
-    target = _cache_path(slug)
+    filename = _basename_for(ws_path)
+    d = _cache_dir(slug)
+    d.mkdir(parents=True, exist_ok=True)
+    # Clean up stale .py files from a previous export under the same slug
+    # (e.g. if a workspace path was renamed). Keep the metadata sidecar.
+    for old in d.glob("*.py"):
+        if old.name != filename:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    target = d / filename
     target.write_bytes(raw)
     _save_meta(
         slug,
         {
             "workspace_path": ws_path,
+            "filename": filename,
             "last_uploaded_mtime": target.stat().st_mtime,
             "origin": "workspace",
         },
     )
     return target
+
+
+# ---- save-back middleware -------------------------------------------------
+
+
+# marimo's save endpoint relative URL inside each per-notebook sub-app.
+_MARIMO_SAVE_PATH = "/api/kernel/save"
+
+
+def _push_cache_file_to_workspace(file_path: str, user: Optional[UserIdentity]) -> None:
+    """Best-effort upload: read ``file_path`` and import it back to its tracked workspace path.
+
+    Logged-and-swallowed on error so save UX in marimo isn't broken by transient API issues
+    — the user can retry from the index page "Save" button.
+    """
+    if user is None or not user.token:
+        LOGGER.warning(
+            "Skipping workspace save for %s: no OBO user/token in scope",
+            file_path,
+        )
+        return
+    try:
+        p = Path(file_path)
+        slug = _slug_for_cache_file(p)
+        if slug is None:
+            LOGGER.debug("Save: %s is outside NOTEBOOK_CACHE, skipping", file_path)
+            return
+        meta = _load_meta(slug)
+        ws_path = meta.get("workspace_path")
+        if not ws_path:
+            LOGGER.info("Save: slug %r has no workspace_path — keeping local-only", slug)
+            return
+        # Reflect the actual on-disk filename in metadata so future saves
+        # use the right basename if marimo ever rewrote it.
+        meta["filename"] = p.name
+        source = p.read_bytes()
+        _import_to_workspace(user, ws_path, source)
+        meta["last_uploaded_mtime"] = p.stat().st_mtime
+        _save_meta(slug, meta)
+        LOGGER.info("Saved %s back to workspace path %s", p, ws_path)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Failed to push %s back to workspace", file_path)
+
+
+def workspace_save_middleware_factory(app):
+    """Wrap a marimo per-notebook sub-app, mirroring saves to the workspace.
+
+    The middleware fires after a successful ``POST .../api/kernel/save`` and
+    re-uploads the freshly written cache file to the workspace path tracked
+    in the slug's ``.meta.json``.
+    """
+
+    class WorkspaceSaveMiddleware:
+        def __init__(self, inner):
+            self.app = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") != "http":
+                await self.app(scope, receive, send)
+                return
+            method = scope.get("method", "").upper()
+            path = scope.get("path", "") or ""
+            is_save = method == "POST" and path.endswith(_MARIMO_SAVE_PATH)
+            if not is_save:
+                await self.app(scope, receive, send)
+                return
+
+            # Capture the user identity *before* awaiting the inner app so
+            # we don't depend on contextvar propagation across the call.
+            user: Optional[UserIdentity] = None
+            state = scope.get("state") or {}
+            cand = state.get("user")
+            if isinstance(cand, UserIdentity):
+                user = cand
+            else:
+                try:
+                    user = identity_from_request(HTTPConnection(scope))
+                except Exception:  # noqa: BLE001
+                    user = None
+            marimo_file = scope.get("marimo_app_file")
+
+            status_holder = {"status": 500}
+
+            async def send_wrapper(msg):
+                if msg.get("type") == "http.response.start":
+                    status_holder["status"] = msg.get("status", 500)
+                await send(msg)
+
+            await self.app(scope, receive, send_wrapper)
+
+            if 200 <= status_holder["status"] < 300 and marimo_file:
+                _push_cache_file_to_workspace(marimo_file, user)
+
+    return WorkspaceSaveMiddleware(app)
 
 
 # ---- ASGI app -------------------------------------------------------------
@@ -309,6 +497,17 @@ def _build_marimo_asgi():
     exported into NOTEBOOK_CACHE become routable immediately.
     """
     _force_marimo_edit_mode()
+    # Install the runtime AI-provider sidecar patch in the *server* process
+    # before marimo touches its config. The patch makes UserConfigManager
+    # merge each request's per-user sidecar (written by
+    # ``register_serving_endpoints_as_ai_providers(scope="memory")`` in the
+    # kernel subprocess) into the config it serves to the AI panel. Without
+    # this, AI providers registered from inside a notebook are invisible
+    # to the marimo frontend.
+    from .._ai import install_runtime_config_patch
+
+    install_runtime_config_patch()
+
     import marimo
 
     builder = marimo.create_asgi_app(quiet=True, include_code=True)
@@ -319,7 +518,14 @@ def _build_marimo_asgi():
         # contextvar is populated for code running inside the notebook (i.e.
         # ``from marimo_databricks_connect import spark`` will see the user's
         # token and build a per-user DatabricksSession).
-        middleware=[obo_middleware_factory],
+        #
+        # ``workspace_save_middleware_factory`` watches for marimo's
+        # ``POST .../api/kernel/save`` and pushes the freshly written file
+        # back to the user's workspace. It runs *inside* the OBO middleware
+        # so the contextvar is set; the explicit user lookup below is a
+        # belt-and-suspenders for environments where the contextvar copy
+        # doesn't propagate across the awaited subapp call.
+        middleware=[obo_middleware_factory, workspace_save_middleware_factory],
     )
     return builder.build()
 
@@ -394,14 +600,23 @@ def build_app() -> FastAPI:
             whom = _slug_for(user.email or user.user or "anon") or "anon"
             slug = f"untitled-{whom}-{stamp}"
 
-        target = _cache_path(slug)
+        if ws_path:
+            filename = _basename_for(ws_path)
+        else:
+            # Local-only notebooks: use the supplied name (or a default).
+            raw_name = (form.get("name") or "untitled.py").strip()
+            filename = _basename_for(raw_name)
+
+        d = _cache_dir(slug)
+        d.mkdir(parents=True, exist_ok=True)
+        target = d / filename
         try:
             target.write_text(render_starter_notebook(), encoding="utf-8")
         except OSError as exc:
             LOGGER.exception("Failed to write starter notebook to %s", target)
             raise HTTPException(500, f"Could not create starter notebook: {exc}") from exc
 
-        meta: dict = {"origin": "new"}
+        meta: dict = {"origin": "new", "filename": filename}
         if ws_path:
             try:
                 _import_to_workspace(user, ws_path, target.read_bytes())
@@ -411,7 +626,7 @@ def build_app() -> FastAPI:
             meta["workspace_path"] = ws_path
             meta["last_uploaded_mtime"] = target.stat().st_mtime
         _save_meta(slug, meta)
-        return RedirectResponse(url=f"{MARIMO_MOUNT}/{slug}", status_code=303)
+        return RedirectResponse(url=_open_url(slug, filename), status_code=303)
 
     @app.post("/save")
     async def save_notebook(request: Request) -> RedirectResponse:
@@ -454,16 +669,20 @@ def build_app() -> FastAPI:
         slug = (form.get("slug") or "").strip()
         if not slug or "/" in slug or slug.startswith("."):
             raise HTTPException(400, "invalid `slug`")
-        cache = _cache_path(slug)
-        meta = _meta_path(slug)
-        for p in (cache, meta):
+        d = _cache_dir(slug)
+        if d.exists():
             try:
-                p.unlink()
-            except FileNotFoundError:
-                pass
+                # Only delete files we created (.py + meta) to avoid wiping
+                # arbitrary content if NOTEBOOK_CACHE was misconfigured.
+                for p in list(d.glob("*.py")) + [_meta_path(slug)]:
+                    try:
+                        p.unlink()
+                    except FileNotFoundError:
+                        pass
+                d.rmdir()
             except OSError as exc:
-                LOGGER.exception("Failed to delete %s", p)
-                raise HTTPException(500, f"Could not delete {p.name}: {exc}") from exc
+                LOGGER.exception("Failed to delete cache dir %s", d)
+                raise HTTPException(500, f"Could not delete draft: {exc}") from exc
         return RedirectResponse(url=form.get("return_to") or "/", status_code=303)
 
     @app.get("/edit")
@@ -479,7 +698,18 @@ def build_app() -> FastAPI:
             LOGGER.exception("Failed to export notebook %r", path)
             raise HTTPException(500, f"Could not export notebook {path!r}: {exc}") from exc
         slug = _slug_for(path)
-        return RedirectResponse(url=f"{MARIMO_MOUNT}/{slug}", status_code=303)
+        return RedirectResponse(url=_open_url(slug), status_code=303)
+
+    @app.get("/open/{slug}")
+    async def open_slug(slug: str) -> RedirectResponse:
+        """Resolve a slug to its current ``/m/<slug>/<basename>`` URL.
+
+        Used by older bookmarks / templates that only know the slug.
+        """
+        cache = _cache_path(slug)
+        if cache is None:
+            raise HTTPException(404, f"No cached notebook for slug {slug!r}")
+        return RedirectResponse(url=_open_url(slug, cache.name), status_code=303)
 
     # Outermost middleware so marimo sub-apps see the contextvar too.
     app.add_middleware(OboMiddleware)

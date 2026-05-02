@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -224,25 +225,27 @@ def test_register_dry_run_does_not_write(tmp_path, monkeypatch):
         _ai_proxy._reset_proxy_for_tests()
 
 
-def test_register_memory_scope_is_per_user_and_patches_marimo(monkeypatch):
-    """scope='memory' keeps providers in-process, keyed by OBO user identity.
+def test_register_memory_scope_is_per_user_and_patches_marimo(tmp_path, monkeypatch):
+    """scope='memory' writes per-user sidecars and the patch merges them.
 
-    The patched ``UserConfigManager._load_config`` must merge each user's
-    runtime registry into the config it returns, leaving on-disk config
-    untouched and other users' entries hidden.
+    The patched ``UserConfigManager._load_config`` must read the sidecar for
+    the current OBO user, leaving on-disk config untouched and other users'
+    entries hidden.
     """
+    monkeypatch.setenv("MDC_AI_RUNTIME_DIR", str(tmp_path / "runtime"))
     from marimo._config.manager import UserConfigManager
 
     from marimo_databricks_connect import _ai as ai_mod
     from marimo_databricks_connect import _obo
 
-    # Reset registry between runs; the monkeypatch on _load_config is
-    # idempotent so we don't bother undoing it.
     ai_mod._reset_runtime_registry_for_tests()
     _ai_proxy._reset_proxy_for_tests()
+    # Install the patch (idempotent) so this test exercises the same code
+    # path the app server uses in production.
+    ai_mod.install_runtime_config_patch()
 
     try:
-        # Pretend we're inside an OBO request for alice@example.com.
+        # alice@example.com registers from her notebook (kernel subprocess).
         state = _obo.set_credentials(
             host="https://example.cloud.databricks.com",
             token="alice-token",
@@ -256,29 +259,28 @@ def test_register_memory_scope_is_per_user_and_patches_marimo(monkeypatch):
                 scope="memory",
                 verbose=False,
             )
-            assert result["config_path"] is None
             assert result["models"] == ["databricks/databricks-claude"]
+            # config_path now points to the sidecar JSON (not None).
+            assert result["config_path"] is not None
+            assert result["config_path"].endswith(".json")
+            assert pathlib.Path(result["config_path"]).exists()
 
+            # The marimo server (same process here) sees alice's providers.
             cfg = UserConfigManager().get_config(hide_secrets=False)
             assert (
                 cfg["ai"]["custom_providers"]["databricks"]["api_key"]
                 == ai_mod._PROXY_API_KEY_SENTINEL
             )
             assert "databricks/databricks-claude" in cfg["ai"]["models"]["custom_models"]
-            alice_base_url = cfg["ai"]["custom_providers"]["databricks"]["base_url"]
-            assert alice_base_url == result["base_url"]
+            assert (
+                cfg["ai"]["custom_providers"]["databricks"]["base_url"]
+                == result["base_url"]
+            )
         finally:
             _obo.reset_credentials(state)
 
-        # Outside any OBO request: alice's entry must NOT leak to '*'.
-        cfg = UserConfigManager().get_config(hide_secrets=False)
-        assert "databricks" not in (cfg.get("ai", {}).get("custom_providers") or {})
-        assert "databricks/databricks-claude" not in (
-            cfg.get("ai", {}).get("models", {}).get("custom_models") or []
-        )
-
-        # A different user (bob) starts with no providers — alice's bucket
-        # must not be visible to him either.
+        # bob@example.com -- different OBO user, no sidecar of his own and no
+        # _default sidecar exists, so he sees no databricks providers.
         state = _obo.set_credentials(
             host="https://example.cloud.databricks.com",
             token="bob-token",
@@ -287,6 +289,58 @@ def test_register_memory_scope_is_per_user_and_patches_marimo(monkeypatch):
         try:
             cfg = UserConfigManager().get_config(hide_secrets=False)
             assert "databricks" not in (cfg.get("ai", {}).get("custom_providers") or {})
+        finally:
+            _obo.reset_credentials(state)
+
+        # No OBO at all -- behaves like local marimo edit, which uses the
+        # _default sidecar bucket. Alice's sidecar is keyed by her email,
+        # so the no-OBO request must not see it.
+        cfg = UserConfigManager().get_config(hide_secrets=False)
+        assert "databricks" not in (cfg.get("ai", {}).get("custom_providers") or {})
+    finally:
+        ai_mod._reset_runtime_registry_for_tests()
+        _ai_proxy._reset_proxy_for_tests()
+
+
+def test_register_memory_scope_default_bucket_is_fallback(tmp_path, monkeypatch, capsys):
+    """With no OBO user the registration lands in the _default bucket and
+    is also exposed to OBO users that don't have their own sidecar yet --
+    so a single shared registration is enough to bootstrap chat for everyone.
+    """
+    monkeypatch.setenv("MDC_AI_RUNTIME_DIR", str(tmp_path / "runtime"))
+    from marimo._config.manager import UserConfigManager
+
+    from marimo_databricks_connect import _ai as ai_mod
+    from marimo_databricks_connect import _obo
+
+    ai_mod._reset_runtime_registry_for_tests()
+    _ai_proxy._reset_proxy_for_tests()
+    ai_mod.install_runtime_config_patch()
+
+    try:
+        # No OBO -> _default bucket. Verbose print should warn that local
+        # marimo edit cannot see this sidecar without the server-side patch.
+        ws = _fake_ws([_ep("databricks-claude", task="llm/v1/chat")])
+        ai_mod.register_serving_endpoints_as_ai_providers(
+            workspace_client=ws,
+            include=["databricks-*"],
+            scope="memory",
+            verbose=True,
+        )
+        out = capsys.readouterr().out
+        assert "_default" in out
+        assert "scope='user'" in out  # local-dev hint surfaced
+
+        # An OBO request without its own sidecar still sees the providers
+        # via the _default fallback.
+        state = _obo.set_credentials(
+            host="https://example.cloud.databricks.com",
+            token="carol-token",
+            user_key="carol@example.com",
+        )
+        try:
+            cfg = UserConfigManager().get_config(hide_secrets=False)
+            assert "databricks" in cfg["ai"]["custom_providers"]
         finally:
             _obo.reset_credentials(state)
     finally:
