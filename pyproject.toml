@@ -45,6 +45,14 @@ replacement = '[\1](https://github.com/brookpatten/marimo-databricks-connect/tre
 # new = "_"
 # (See [project.scripts] above for the real entry points.)
 
+
+[tool.marimo.ai.custom_providers.databricks]
+base_url = "http://127.0.0.1:35699"
+api_key = "databricks-mdc-proxy"
+
+[tool.marimo.ai.models]
+custom_models = ["databricks/databricks-bge-large-en", "databricks/databricks-claude-haiku-4-5", "databricks/databricks-claude-opus-4-1", "databricks/databricks-claude-opus-4-5", "databricks/databricks-claude-opus-4-6", "databricks/databricks-claude-opus-4-7", "databricks/databricks-claude-sonnet-4", "databricks/databricks-claude-sonnet-4-5", "databricks/databricks-claude-sonnet-4-6", "databricks/databricks-gemma-3-12b", "databricks/databricks-gpt-oss-120b", "databricks/databricks-gpt-oss-20b", "databricks/databricks-gte-large-en", "databricks/databricks-llama-4-maverick", "databricks/databricks-meta-llama-3-1-8b-instruct", "databricks/databricks-meta-llama-3-3-70b-instruct", "databricks/databricks-meta-llama-3.1-405b-instruct", "databricks/databricks-qwen3-embedding-0-6b", "databricks/databricks-qwen3-next-80b-a3b-instruct"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2.2,<9",

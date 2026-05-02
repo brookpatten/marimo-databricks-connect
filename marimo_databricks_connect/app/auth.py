@@ -129,8 +129,9 @@ class OboMiddleware:
         # WebSocket upgrade, killing the marimo kernel socket and surfacing
         # to the user as a misleading "kernel not found" error.
         ident = identity_from_request(HTTPConnection(scope))
+        user_key = ident.email or ident.user
         if ident.token:
-            state = _obo.set_credentials(ident.host, ident.token)
+            state = _obo.set_credentials(ident.host, ident.token, user_key=user_key)
             scope.setdefault("state", {})
             scope["state"]["user"] = ident
             try:
@@ -140,7 +141,16 @@ class OboMiddleware:
         else:
             scope.setdefault("state", {})
             scope["state"]["user"] = ident
-            await self.app(scope, receive, send)
+            if user_key:
+                # Even without an OBO token we want downstream code to know
+                # which user is calling — e.g. for per-user runtime AI config.
+                state = _obo.set_credentials(ident.host, None, user_key=user_key)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    _obo.reset_credentials(state)
+            else:
+                await self.app(scope, receive, send)
 
 
 def get_request_user(request: Request) -> UserIdentity:
