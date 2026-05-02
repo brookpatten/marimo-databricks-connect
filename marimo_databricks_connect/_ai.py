@@ -226,87 +226,187 @@ def _write_marimo_toml(
     path.write_text(tomlkit.dumps(doc))
 
 
-# ---- runtime (in-memory) AI config registry ------------------------------ #
+# ---- runtime (cross-process) AI config sidecars -------------------------- #
 #
 # When marimo is hosted as a Databricks App, multiple end users share a single
 # server process and a single on-disk marimo config. Writing AI providers to
 # that shared config would either (a) leak one user's discovered endpoints to
-# everyone else or (b) require coordinated writes / restarts. Instead we keep
-# the config in-process and merge it into marimo's view of the user config on
-# the fly, keyed by the OBO user identity attached to each request.
+# everyone else or (b) require coordinated writes / restarts.
 #
-# Layout: ``{user_key_or_'*': {"providers": {provider_name: {...}},
-#                              "models": {"custom_models": [...],
-#                                         "chat_model": ..., ...}}}``
-# ``"*"`` is the fallback bucket used when no OBO user is in scope (local
-# dev) or when no per-user entry exists.
+# Critically, marimo runs notebooks in **separate kernel subprocesses**
+# (multiprocessing) in EDIT mode -- so any in-memory registry populated from
+# the notebook is invisible to the marimo server process that renders the AI
+# panel. We therefore persist the runtime config to per-user JSON sidecar
+# files in a shared directory, and install a UserConfigManager monkeypatch in
+# the *server* process that reads the right sidecar based on the current
+# request's OBO identity.
+#
+# Sidecar layout (one file per user, written atomically):
+#     <RUNTIME_DIR>/<sha256(user_key)[:16]>.json
+#     {"providers": {provider_name: {"base_url": ..., "api_key": ...}, ...},
+#      "models":    {"custom_models": [...],
+#                    "chat_model": ..., "edit_model": ..., "autocomplete_model": ...}}
+#
+# The user_key ``"_default"`` is used when no OBO user is in scope (local
+# ``marimo edit`` -- single-user assumption).
 
-_RUNTIME_AI_REGISTRY: dict[str, dict[str, Any]] = {}
-_RUNTIME_PATCH_INSTALLED = False
+_DEFAULT_USER_KEY = "_default"
+
+
+def _runtime_dir() -> pathlib.Path:
+    """Directory shared between the marimo server and kernel subprocesses.
+
+    Override via ``MDC_AI_RUNTIME_DIR`` if the default temp location isn't
+    suitable (e.g. on systems where ``/tmp`` is per-process).
+    """
+    import tempfile
+
+    env = os.environ.get("MDC_AI_RUNTIME_DIR")
+    if env:
+        return pathlib.Path(env)
+    uid = getattr(os, "getuid", lambda: "x")()
+    return pathlib.Path(tempfile.gettempdir()) / f"mdc-ai-runtime-{uid}"
 
 
 def _runtime_user_key() -> str:
-    """Return the per-user registry key for the current request, or ``"*"``."""
+    """Return the per-user sidecar key for the current request."""
     try:
         from . import _obo
 
-        return _obo.get_user_key() or "*"
+        return _obo.get_user_key() or _DEFAULT_USER_KEY
     except Exception:  # noqa: BLE001 -- never let config lookup fail open
-        return "*"
+        return _DEFAULT_USER_KEY
 
 
-def _merge_runtime_into_config(base: Any) -> Any:
-    """Merge the runtime AI registry into a loaded marimo user config dict.
+def _sidecar_path(user_key: str) -> pathlib.Path:
+    import hashlib
 
-    Operates on plain dicts (returned by ``UserConfigManager._load_config``)
-    rather than tomlkit documents, so we can treat keys as ordinary mapping
-    entries. Per-user entries take priority over the shared ``"*"`` bucket;
-    on-disk config is preserved unless the runtime registry explicitly sets
-    a key.
+    safe = hashlib.sha256(user_key.encode("utf-8")).hexdigest()[:16]
+    return _runtime_dir() / f"{safe}.json"
+
+
+def _read_sidecar(user_key: str) -> dict[str, Any]:
+    import json
+
+    p = _sidecar_path(user_key)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        LOG.warning("mdc: discarding unreadable runtime AI sidecar at %s", p)
+        return {}
+
+
+def _write_sidecar(user_key: str, payload: dict[str, Any]) -> pathlib.Path:
+    """Atomic write of ``payload`` to the per-user sidecar (tmp + rename)."""
+    import json
+
+    p = _sidecar_path(user_key)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Lock down: only the OS user running this process should read the dir;
+    # in Databricks Apps each end user shares the app's OS uid, but on local
+    # multi-user machines this prevents cross-account leakage.
+    try:
+        os.chmod(p.parent, 0o700)
+    except OSError:
+        pass
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, p)
+    return p
+
+
+def _merge_into_sidecar(
+    user_key: str,
+    *,
+    provider_name: str,
+    base_url: str,
+    api_key: str,
+    model_ids: list[str],
+    default_chat: Optional[str],
+    default_edit: Optional[str],
+    default_autocomplete: Optional[str],
+) -> pathlib.Path:
+    """Merge a single provider into the per-user sidecar and persist it.
+
+    Existing entries (other providers, other models) are preserved so that
+    repeated calls accumulate rather than clobber.
     """
-    star = _RUNTIME_AI_REGISTRY.get("*") or {}
-    user = _RUNTIME_AI_REGISTRY.get(_runtime_user_key()) or {}
-    if not star and not user:
-        return base
+    payload = _read_sidecar(user_key) or {}
+    providers = dict(payload.get("providers") or {})
+    providers[provider_name] = {"base_url": base_url, "api_key": api_key}
+    payload["providers"] = providers
+
+    models = dict(payload.get("models") or {})
+    existing = list(models.get("custom_models") or [])
+    models["custom_models"] = sorted(set(existing) | set(model_ids))
+    if default_chat:
+        models["chat_model"] = default_chat
+    if default_edit:
+        models["edit_model"] = default_edit
+    if default_autocomplete:
+        models["autocomplete_model"] = default_autocomplete
+    payload["models"] = models
+
+    return _write_sidecar(user_key, payload)
+
+
+def _merge_sidecar_into_config(base: Any, user_key: str) -> Any:
+    """Merge the per-user sidecar (if any) into a loaded marimo user config."""
+    payload = _read_sidecar(user_key)
+    if not payload:
+        # Fall through to the default bucket so a single shared registration
+        # (no OBO) is still surfaced when an OBO request comes in for an
+        # unregistered user. Removing this would force every Apps user to
+        # run the cell themselves before chat works at all.
+        if user_key != _DEFAULT_USER_KEY:
+            payload = _read_sidecar(_DEFAULT_USER_KEY)
+        if not payload:
+            return base
 
     merged = dict(base) if isinstance(base, dict) else {}
     ai = dict(merged.get("ai") or {})
 
     cps = dict(ai.get("custom_providers") or {})
-    for src in (star, user):
-        for name, cfg in (src.get("providers") or {}).items():
-            cps[name] = dict(cfg)
+    for name, cfg in (payload.get("providers") or {}).items():
+        cps[name] = dict(cfg)
     ai["custom_providers"] = cps
 
     models = dict(ai.get("models") or {})
     existing = list(models.get("custom_models") or [])
-    extra: list[str] = []
-    for src in (star, user):
-        extra.extend((src.get("models") or {}).get("custom_models") or [])
+    extra = list((payload.get("models") or {}).get("custom_models") or [])
     models["custom_models"] = sorted(set(existing) | set(extra))
-    # User-level defaults beat the star-level defaults beat whatever's on disk.
-    for src in (star, user):
-        for k in ("chat_model", "edit_model", "autocomplete_model"):
-            v = (src.get("models") or {}).get(k)
-            if v:
-                models[k] = v
+    for k in ("chat_model", "edit_model", "autocomplete_model"):
+        v = (payload.get("models") or {}).get(k)
+        if v:
+            models[k] = v
     ai["models"] = models
 
     merged["ai"] = ai
     return merged
 
 
-def _install_runtime_config_patch() -> None:
-    """Monkeypatch :meth:`marimo._config.manager.UserConfigManager._load_config`.
+_RUNTIME_PATCH_INSTALLED = False
 
-    Idempotent. After the patch, every call to marimo's user-config loader
-    returns the on-disk config merged with our in-process AI registry,
-    keyed by the current OBO user (via ``_obo.get_user_key()``).
 
-    ``UserConfigManager._load_config`` is invoked by every
-    ``MarimoConfigManager.get_config()`` call, which in turn powers the
-    AI endpoint handlers — so providers registered at runtime show up
-    on the next browser refresh without restarting the server.
+def install_runtime_config_patch() -> None:
+    """Patch ``UserConfigManager._load_config`` to merge per-user sidecars.
+
+    Call this once in the **marimo server process** (the parent that renders
+    the AI panel) -- typically from your ASGI app builder. Idempotent.
+
+    After the patch, every call to marimo's user-config loader merges in the
+    sidecar for the current request's OBO user (or ``_default`` when no OBO
+    is active), so providers registered via ``scope="memory"`` show up on
+    the next browser refresh without restarting the server.
+
+    For ``marimo_databricks_connect.app`` deployments this is installed
+    automatically when :mod:`.app.server` is imported.
     """
     global _RUNTIME_PATCH_INSTALLED
     if _RUNTIME_PATCH_INSTALLED:
@@ -322,15 +422,30 @@ def _install_runtime_config_patch() -> None:
     def patched(self):  # type: ignore[no-untyped-def]
         base = original(self)
         try:
-            return _merge_runtime_into_config(base)
+            return _merge_sidecar_into_config(base, _runtime_user_key())
         except Exception:  # noqa: BLE001
-            LOG.exception("mdc: failed to merge runtime AI config; falling back to disk-only")
+            LOG.exception("mdc: failed to merge runtime AI sidecar; falling back to disk-only")
             return base
 
     patched._mdc_runtime_patched = True  # type: ignore[attr-defined]
     UserConfigManager._load_config = patched  # type: ignore[method-assign]
     _RUNTIME_PATCH_INSTALLED = True
     LOG.info("mdc: installed runtime AI-config patch on marimo UserConfigManager")
+
+
+# Back-compat alias.
+_install_runtime_config_patch = install_runtime_config_patch
+
+
+def _reset_runtime_registry_for_tests() -> None:
+    """Test helper: wipe every sidecar in the runtime dir."""
+    d = _runtime_dir()
+    if d.exists():
+        for p in d.glob("*.json"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def _store_runtime_ai_config(
@@ -343,24 +458,18 @@ def _store_runtime_ai_config(
     default_chat: Optional[str],
     default_edit: Optional[str],
     default_autocomplete: Optional[str],
-) -> None:
-    """Update the in-process registry for ``user_key`` with the given provider."""
-    bucket = _RUNTIME_AI_REGISTRY.setdefault(user_key, {"providers": {}, "models": {}})
-    bucket["providers"][provider_name] = {"base_url": base_url, "api_key": api_key}
-    models = bucket.setdefault("models", {})
-    existing = list(models.get("custom_models") or [])
-    models["custom_models"] = sorted(set(existing) | set(model_ids))
-    if default_chat:
-        models["chat_model"] = default_chat
-    if default_edit:
-        models["edit_model"] = default_edit
-    if default_autocomplete:
-        models["autocomplete_model"] = default_autocomplete
-
-
-def _reset_runtime_registry_for_tests() -> None:
-    """Test helper: clear the in-memory registry. Does not undo the patch."""
-    _RUNTIME_AI_REGISTRY.clear()
+) -> pathlib.Path:
+    """Persist a provider into the per-user sidecar (cross-process safe)."""
+    return _merge_into_sidecar(
+        user_key,
+        provider_name=provider_name,
+        base_url=base_url,
+        api_key=api_key,
+        model_ids=model_ids,
+        default_chat=default_chat,
+        default_edit=default_edit,
+        default_autocomplete=default_autocomplete,
+    )
 
 
 def register_serving_endpoints_as_ai_providers(
@@ -497,14 +606,18 @@ def register_serving_endpoints_as_ai_providers(
 
     cfg_path: Optional[pathlib.Path] = None
     if write and scope == "memory":
-        # In-process registry: works for multi-user app deployments where
+        # Cross-process per-user sidecar: works for multi-tenant app
+        # deployments where the marimo server (parent process) and the
+        # notebook kernel (subprocess) cannot share Python state, and where
         # writing to a shared marimo.toml would either leak config across
-        # users or require restarting the server. The patch installed below
-        # makes marimo's config loader merge this registry into the user
-        # config it returns to the AI panel.
-        _install_runtime_config_patch()
-        _store_runtime_ai_config(
-            user_key=_runtime_user_key(),
+        # users or require restarting the server. The sidecar is read by
+        # the UserConfigManager monkeypatch installed in the marimo server
+        # process (auto-installed by ``marimo_databricks_connect.app.server``;
+        # call ``install_runtime_config_patch()`` yourself when embedding
+        # marimo into a different ASGI app).
+        user_key = _runtime_user_key()
+        cfg_path = _store_runtime_ai_config(
+            user_key=user_key,
             provider_name=provider_name,
             base_url=base_url,
             api_key=_PROXY_API_KEY_SENTINEL,
@@ -513,14 +626,36 @@ def register_serving_endpoints_as_ai_providers(
             default_edit=_qualify(default_edit),
             default_autocomplete=_qualify(default_autocomplete),
         )
+        # Also install the patch in *this* process. For Databricks Apps the
+        # server already installed it at import time; for environments where
+        # the kernel was forked from the patched server this is a no-op. We
+        # do it again here so a developer who imports this module from a
+        # standalone script still ends up with a working setup.
+        install_runtime_config_patch()
         msg = (
-            f"mdc: registered {len(model_ids)} Databricks model(s) in-process for "
-            f"user={_runtime_user_key()!r}. Refresh the marimo browser tab so the "
-            "AI panel picks up the new providers."
+            f"mdc: registered {len(model_ids)} Databricks model(s) in sidecar "
+            f"{cfg_path} for user={user_key!r}. Refresh the marimo browser tab "
+            "so the AI panel picks up the new providers."
         )
         if verbose:
             print(msg)
         LOG.info(msg)
+        if user_key == _DEFAULT_USER_KEY:
+            # Local marimo edit: the marimo server process did not import
+            # us, so the sidecar will be ignored. Tell the developer to use
+            # scope='user' (or pyproject) instead.
+            warn = (
+                "mdc: scope='memory' relies on a UserConfigManager monkeypatch "
+                "installed in the marimo server process. When running locally "
+                "under `marimo edit` we don't control that process, so the "
+                "sidecar is ignored. Use scope='user' (writes "
+                "~/.config/marimo/marimo.toml) for local dev, or run via "
+                "`python -m marimo_databricks_connect.app` so the patch is "
+                "installed automatically."
+            )
+            if verbose:
+                print(warn)
+            LOG.warning(warn)
     elif write:
         cfg_path, key_prefix = _resolve_target(scope)
         _write_marimo_toml(

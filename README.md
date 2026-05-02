@@ -10,6 +10,8 @@ This package provides compatibility & widgets for marimo notebooks & databricks.
 - Browsing of external locations, volumes, dbfs, workspace in the marimo storage browser
 - Notebook widgets to monitor and control of specific instances of databricks capabilities (clusters, workflows, vector search, apps etc)
 - Widgets to browse & explore databricks capabilities (compute, workflows, unity catalog)
+- Works in local marimo `marimo edit notebook.py`, in the vscode extension, or deployed as a databricks app
+
 
 ## Why Marimo?
 
@@ -342,4 +344,31 @@ All widgets authenticate using the default Databricks auth chain (env vars, `~/.
 
 ```bash
 marimo edit scratch/m.py
+```
+
+## Deploying as a Databricks App
+
+app.yaml
+```yaml
+command:
+  - "python"
+  - "-m"
+  - "marimo_databricks_connect.app"
+
+env:
+  # Persist exported notebooks across requests in the app's writable area.
+  - name: MDC_APP_NOTEBOOK_CACHE
+    value: "/tmp/mdc-notebooks"
+  - name: LOG_LEVEL
+    value: "info"
+
+user_authorization:
+  scopes:
+    - "all-apis"
+
+```
+
+requirements.txt
+```
+marimo-databricks-connect[app]
 ```
